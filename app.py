@@ -3,6 +3,16 @@ import os
 import json
 from PIL import Image
 from datetime import datetime
+from typing import Dict, Any
+
+# 🔹 NEW IMPORTS
+import cv2
+
+try:
+    from gpiozero import DigitalOutputDevice
+    GPIO_AVAILABLE = True
+except:
+    GPIO_AVAILABLE = False
 
 # ===================== CONFIG =====================
 TUNNELS = {
@@ -16,18 +26,28 @@ TUNNELS = {
     }
 }
 
+SHUTTER_PIN = 17
+
+if GPIO_AVAILABLE:
+    shutter = DigitalOutputDevice(SHUTTER_PIN)
+
 IMAGE_W = 260
 ANNOT_W = 260
 ZOOM_W = 650
 
-# ===================== PAGE SETUP =====================
 st.set_page_config(page_title="SBM Defect Dashboard", layout="wide")
 
-# ===================== SESSION STATE =====================
-for tunnel in TUNNELS:
-    st.session_state.setdefault(f"refresh_{tunnel}", True)
-
 # ===================== FUNCTIONS =====================
+
+def trigger_shutter():
+    if GPIO_AVAILABLE:
+        import time
+        shutter.on()
+        time.sleep(0.2)
+        shutter.off()
+    else:
+        st.warning("GPIO not available")
+
 def get_latest_image(folder, refresh_flag):
     if not refresh_flag:
         return st.session_state.get(f"cached_{folder}")
@@ -44,35 +64,29 @@ def get_latest_image(folder, refresh_flag):
     st.session_state[f"cached_{folder}"] = img
     return img
 
-
 def get_all_annotations(annot_dir, image_path):
     if not os.path.exists(annot_dir):
         return []
 
     base_name = os.path.splitext(os.path.basename(image_path))[0]
 
-    annots = [
+    return [
         os.path.join(annot_dir, f)
         for f in os.listdir(annot_dir)
-        if f.startswith(base_name) and f.lower().endswith((".jpg", ".png"))
+        if f.startswith(base_name)
     ]
 
-    return sorted(annots)
-
-
-def load_meta(image_path):
+def load_meta(image_path) -> Dict[str, Any]:
     meta_path = os.path.splitext(image_path)[0] + ".json"
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             return json.load(f)
     return {"defects": []}
 
-
-def save_meta(image_path, data):
+def save_meta(image_path, data: Dict[str, Any]):
     meta_path = os.path.splitext(image_path)[0] + ".json"
     with open(meta_path, "w") as f:
         json.dump(data, f, indent=4)
-
 
 def shift_stats():
     stats = {
@@ -98,18 +112,36 @@ op_name = st.sidebar.text_input("Operator Name")
 op_id = st.sidebar.text_input("Operator ID")
 shift = st.sidebar.selectbox("Shift", ["A", "B", "C"])
 
+# ===================== CAMERA CONTROL =====================
 st.sidebar.divider()
-st.sidebar.subheader("Defect Legend")
-st.sidebar.markdown("""
-🟥 Scratch – High  
-🟨 Dent – Medium  
-🟦 Lap / Overfill  
-🟩 Surface Mark  
-""")
+st.sidebar.subheader("📷 Camera Control")
+
+if st.sidebar.button("🔴 LIVE + TRIGGER"):
+    st.session_state["live"] = True
+    trigger_shutter()
+
+if st.sidebar.button("⏹ STOP LIVE"):
+    st.session_state["live"] = False
+
+# ===================== LIVE CAMERA =====================
+if st.session_state.get("live", False):
+    st.subheader("🔴 Live Camera Feed")
+
+    frame_window = st.empty()
+    cap = cv2.VideoCapture(0)
+
+    while st.session_state.get("live", False):
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_window.image(frame)
+
+    cap.release()
 
 # ===================== HEADER =====================
 st.title("Special Bar Mill – Defect Validation Dashboard")
-st.markdown("**Auto-matched multiple defect annotations per image**")
 st.divider()
 
 # ===================== MAIN VIEW =====================
@@ -117,39 +149,26 @@ c1, c2 = st.columns(2)
 
 for col, (tunnel, cfg) in zip([c1, c2], TUNNELS.items()):
     refresh_key = f"refresh_{tunnel}"
-    img = get_latest_image(cfg["image_dir"], st.session_state[refresh_key])
+    img = get_latest_image(cfg["image_dir"], st.session_state.get(refresh_key, True))
 
     with col:
         st.subheader(tunnel)
 
         if img:
             annots = get_all_annotations(cfg["annot_dir"], img)
-            meta = load_meta(img)
+            meta: Dict[str, Any] = load_meta(img)
 
             i1, i2 = st.columns(2)
 
             with i1:
-                st.markdown("**Original Image**")
                 st.image(Image.open(img), width=IMAGE_W)
 
             with i2:
-                st.markdown("**Annotated Defects**")
                 if annots:
-                    for idx, a in enumerate(annots, start=1):
+                    for a in annots:
                         st.image(Image.open(a), width=ANNOT_W)
-                        with st.expander(f"🔍 Zoom Annotation {idx}"):
-                            st.image(Image.open(a), width=ZOOM_W)
                 else:
-                    st.info("No annotations found")
-
-            st.markdown("### Detected Defects (List)")
-            if meta.get("defects"):
-                for d in meta["defects"]:
-                    st.markdown(
-                        f"- **{d['type']}** | Severity: {d['severity']} | Confidence: {d.get('confidence','NA')}"
-                    )
-            else:
-                st.warning("Defect list not provided by AI")
+                    st.info("No annotations")
 
             decision = st.radio(
                 "Final decision:",
@@ -157,43 +176,39 @@ for col, (tunnel, cfg) in zip([c1, c2], TUNNELS.items()):
                 key=f"dec_{tunnel}"
             )
 
-            remark = st.text_area("Remarks", key=f"rem_{tunnel}")
-
             if st.button(f"Save Validation – {tunnel}"):
                 if not op_name or not op_id:
-                    st.error("Operator Name & ID required")
+                    st.error("Operator details required")
                 elif decision == "Not Validated":
-                    st.error("Please select a decision")
+                    st.error("Select decision")
                 else:
                     meta.update({
                         "operator_name": op_name,
                         "operator_id": op_id,
                         "shift": shift,
                         "operator_decision": decision,
-                        "tunnel": tunnel,
-                        "remarks": remark,
-                        "validated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "annotation_files": [os.path.basename(a) for a in annots]
+                        "validated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     })
 
                     save_meta(img, meta)
-                    st.session_state[refresh_key] = True
-                    st.success("Validation saved")
+                    st.success("Saved")
                     st.rerun()
+
         else:
             st.warning("No image available")
 
-# ===================== BOTTOM – SHIFT STATS =====================
+# ===================== STATS =====================
 st.divider()
-st.subheader("📊 Shift-wise Defect Statistics")
+st.subheader("📊 Shift-wise Statistics")
 
 stats = shift_stats()
 st.table({
     "Shift": list(stats.keys()),
     "Defect Confirmed": [v["Defect Confirmed"] for v in stats.values()],
     "False Alarm": [v["False Alarm"] for v in stats.values()],
-    "Total Validations": [
-        v["Defect Confirmed"] + v["False Alarm"] for v in stats.values()
+    "Total": [
+        v["Defect Confirmed"] + v["False Alarm"]
+        for v in stats.values()
     ]
 })
 
