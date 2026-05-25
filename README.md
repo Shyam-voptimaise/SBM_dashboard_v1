@@ -18,6 +18,28 @@ This project is a Streamlit-based dashboard for validating defects detected in s
 3. Run the app:
    streamlit run app.py
 
+## MQTT Temperature
+The sidebar reads DS18B20 temperature messages from:
+
+```
+hotmetal/env/reading
+```
+
+Expected payload:
+
+```
+{"sensor":"DS18B20","temp_c":35.875,"timestamp":18129,"status":"ok"}
+```
+
+When the dashboard runs on the laptop, `localhost` is the laptop, not the Pi.
+Set the MQTT broker to the Pi hostname or IP in the sidebar, or start Streamlit
+with an environment variable:
+
+```
+$env:MQTT_BROKERS="voptimaipi5.local,voptimaipi5,192.168.1.50"
+streamlit run app.py
+```
+
 ## Folder Structure
 - app.py : Main Streamlit application
 - requirements.txt : Python dependencies

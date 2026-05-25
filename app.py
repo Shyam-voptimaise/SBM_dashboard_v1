@@ -3,6 +3,7 @@ import os
 import json
 import threading
 import time
+import socket
 import paho.mqtt.client as mqtt
 from PIL import Image
 from datetime import datetime
@@ -20,50 +21,194 @@ TUNNELS = {
 REFRESH_INTERVAL = 1  # seconds
 
 # MQTT topic for temperature readings
-MQTT_BROKER = "localhost"
-MQTT_TOPIC = "hotmetal/env/reading"
+MQTT_BROKERS = os.getenv(
+    "MQTT_BROKERS",
+    os.getenv("MQTT_BROKER", "voptimaipi5.local,voptimaipi5,localhost")
+)
+MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
+MQTT_TOPIC = os.getenv("MQTT_TOPIC", "hotmetal/env/reading")
+MQTT_CONNECT_TIMEOUT = float(os.getenv("MQTT_CONNECT_TIMEOUT", "2"))
 
-# shared container for latest temperature
-latest_temp = {
-    "value": None,
-    "ts": None
-}
+
+class TemperatureState:
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._data = {
+            "value": None,
+            "sensor": None,
+            "sensor_status": None,
+            "source_timestamp": None,
+            "updated_at": None,
+            "broker": None,
+            "connected": False,
+            "error": None,
+            "raw_payload": None,
+        }
+
+    def update(self, **kwargs):
+        with self._lock:
+            self._data.update(kwargs)
+
+    def snapshot(self):
+        with self._lock:
+            return dict(self._data)
 
 
-def _on_mqtt_message(client, userdata, msg):
+def parse_broker_list(raw_brokers, default_port):
+    brokers = []
+
+    for entry in str(raw_brokers).replace(";", ",").split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+
+        host = entry
+        port = default_port
+
+        if entry.count(":") == 1:
+            maybe_host, maybe_port = entry.rsplit(":", 1)
+            if maybe_host and maybe_port.isdigit():
+                host = maybe_host
+                port = int(maybe_port)
+
+        brokers.append((host, port))
+
+    return brokers or [("localhost", default_port)]
+
+
+def parse_temperature_payload(payload):
     try:
-        payload = msg.payload.decode("utf-8")
-        # try to parse numeric value, otherwise store raw payload
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        data = payload
+
+    if isinstance(data, dict):
+        raw_temp = (
+            data.get("temp_c")
+            if data.get("temp_c") is not None
+            else data.get("temperature", data.get("temp"))
+        )
+
         try:
-            val = float(payload)
-        except Exception:
-            val = payload
+            value = float(raw_temp) if raw_temp is not None else None
+        except (TypeError, ValueError):
+            value = None
 
-        latest_temp["value"] = val
-        latest_temp["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    except Exception:
-        pass
+        return {
+            "value": value,
+            "sensor": data.get("sensor"),
+            "sensor_status": data.get("status"),
+            "source_timestamp": data.get("timestamp"),
+            "raw_payload": payload,
+        }
 
-
-mqtt_client = None
-
-def start_mqtt():
-    global mqtt_client
-
-    if mqtt_client is not None:
-        return mqtt_client
-
-    client = mqtt.Client()
-    client.on_message = _on_mqtt_message
     try:
-        client.connect(MQTT_BROKER, 1883, 60)
-        client.subscribe(MQTT_TOPIC)
-        client.loop_start()
-        mqtt_client = client
-    except Exception:
-        mqtt_client = None
+        value = float(data)
+    except (TypeError, ValueError):
+        value = None
 
-    return mqtt_client
+    return {
+        "value": value,
+        "sensor": None,
+        "sensor_status": None,
+        "source_timestamp": None,
+        "raw_payload": payload,
+    }
+
+
+def create_mqtt_client(client_id):
+    try:
+        return mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
+            client_id=client_id,
+        )
+    except (AttributeError, TypeError):
+        return mqtt.Client(client_id=client_id)
+
+
+def mqtt_success(reason_code):
+    if reason_code in (0, "0"):
+        return True
+    if hasattr(reason_code, "is_failure"):
+        is_failure = reason_code.is_failure
+        return not is_failure() if callable(is_failure) else not is_failure
+    return str(reason_code).lower() == "success"
+
+
+@st.cache_resource(show_spinner=False)
+def start_mqtt(raw_brokers, topic, default_port, connect_timeout):
+    state = TemperatureState()
+    last_error = None
+
+    for host, port in parse_broker_list(raw_brokers, default_port):
+        broker_label = f"{host}:{port}"
+
+        try:
+            with socket.create_connection((host, port), timeout=connect_timeout):
+                pass
+        except OSError as exc:
+            last_error = f"{broker_label} - {exc}"
+            continue
+
+        client = create_mqtt_client(
+            f"sbm-dashboard-temp-{os.getpid()}-{host.replace('.', '-')}-{port}"
+        )
+
+        def on_connect(client, userdata, flags, reason_code, properties=None):
+            if mqtt_success(reason_code):
+                client.subscribe(topic)
+                state.update(connected=True, broker=broker_label, error=None)
+            else:
+                state.update(
+                    connected=False,
+                    broker=broker_label,
+                    error=f"MQTT connect failed: {reason_code}",
+                )
+
+        def on_disconnect(client, userdata, *args):
+            reason_code = args[0] if args else None
+            state.update(
+                connected=False,
+                error=f"MQTT disconnected: {reason_code}",
+            )
+
+        def on_message(client, userdata, msg):
+            try:
+                payload = msg.payload.decode("utf-8")
+                reading = parse_temperature_payload(payload)
+                state.update(
+                    **reading,
+                    updated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    connected=True,
+                    broker=broker_label,
+                    error=None,
+                )
+            except Exception as exc:
+                state.update(error=f"MQTT message error: {exc}")
+
+        client.on_connect = on_connect
+        client.on_disconnect = on_disconnect
+        client.on_message = on_message
+
+        try:
+            client.connect(host, port, 60)
+            client.subscribe(topic)
+            client.loop_start()
+            state.update(connected=True, broker=broker_label, error=None)
+            return state, client
+        except Exception as exc:
+            last_error = f"{broker_label} - {exc}"
+            try:
+                client.loop_stop()
+                client.disconnect()
+            except Exception:
+                pass
+
+    state.update(
+        connected=False,
+        error=last_error or "No MQTT broker configured",
+    )
+    return state, None
 
 # ===================== PAGE =====================
 st.set_page_config(page_title="SBM Defect Dashboard", layout="wide")
@@ -211,24 +356,54 @@ shift = st.sidebar.selectbox("Shift", ["A", "B", "C"])
 st.sidebar.divider()
 st.sidebar.write(f"Auto refresh every {REFRESH_INTERVAL} sec")
 
-# ensure MQTT subscriber is running (singleton)
-start_mqtt()
+# MQTT broker can be the Pi hostname/IP when running this dashboard on a laptop.
+st.sidebar.divider()
+mqtt_brokers = st.sidebar.text_input(
+    "MQTT broker(s)",
+    value=MQTT_BROKERS,
+    help="Use the Pi hostname or IP when the dashboard runs on a laptop.",
+)
+mqtt_topic = st.sidebar.text_input("MQTT topic", value=MQTT_TOPIC)
+
+if st.sidebar.button("Reconnect MQTT"):
+    start_mqtt.clear()
+    st.rerun()
+
+# ensure MQTT subscriber is running and survives Streamlit refreshes
+temp_state, _mqtt_client = start_mqtt(
+    mqtt_brokers,
+    mqtt_topic,
+    MQTT_PORT,
+    MQTT_CONNECT_TIMEOUT,
+)
+latest_temp = temp_state.snapshot()
+latest_temp["ts"] = latest_temp.get("updated_at")
 
 # show temperature reading in sidebar
 with st.sidebar:
-    st.markdown("### 🌡️ Temperature")
+    st.markdown("### Temperature")
     temp_display = st.empty()
     ts_display = st.empty()
 
     val = latest_temp.get("value")
     ts = latest_temp.get("ts")
+    sensor_status = latest_temp.get("sensor_status")
+    broker = latest_temp.get("broker")
+    error = latest_temp.get("error")
 
     if val is None:
-        temp_display.info("No reading yet")
+        temp_display.info("No temperature reading yet")
     else:
-        temp_display.metric(label="Temperature", value=str(val))
+        temp_display.metric(label="Temperature", value=f"{val:.2f} C")
         if ts:
             ts_display.caption(f"Updated: {ts}")
+
+    if sensor_status:
+        st.caption(f"Sensor: {sensor_status}")
+    if broker:
+        st.caption(f"MQTT: {broker} | {mqtt_topic}")
+    if error:
+        st.error(error)
 
 # ===================== HEADER =====================
 st.title("Inline Defect Detection Dashboard - SBM")
