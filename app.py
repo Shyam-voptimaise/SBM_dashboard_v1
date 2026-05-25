@@ -1,6 +1,9 @@
 import streamlit as st
 import os
 import json
+import threading
+import time
+import paho.mqtt.client as mqtt
 from PIL import Image
 from datetime import datetime
 
@@ -14,7 +17,53 @@ TUNNELS = {
     }
 }
 
-REFRESH_INTERVAL = 5  # seconds
+REFRESH_INTERVAL = 1  # seconds
+
+# MQTT topic for temperature readings
+MQTT_BROKER = "localhost"
+MQTT_TOPIC = "hotmetal/env/reading"
+
+# shared container for latest temperature
+latest_temp = {
+    "value": None,
+    "ts": None
+}
+
+
+def _on_mqtt_message(client, userdata, msg):
+    try:
+        payload = msg.payload.decode("utf-8")
+        # try to parse numeric value, otherwise store raw payload
+        try:
+            val = float(payload)
+        except Exception:
+            val = payload
+
+        latest_temp["value"] = val
+        latest_temp["ts"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        pass
+
+
+mqtt_client = None
+
+def start_mqtt():
+    global mqtt_client
+
+    if mqtt_client is not None:
+        return mqtt_client
+
+    client = mqtt.Client()
+    client.on_message = _on_mqtt_message
+    try:
+        client.connect(MQTT_BROKER, 1883, 60)
+        client.subscribe(MQTT_TOPIC)
+        client.loop_start()
+        mqtt_client = client
+    except Exception:
+        mqtt_client = None
+
+    return mqtt_client
 
 # ===================== PAGE =====================
 st.set_page_config(page_title="SBM Defect Dashboard", layout="wide")
@@ -162,8 +211,27 @@ shift = st.sidebar.selectbox("Shift", ["A", "B", "C"])
 st.sidebar.divider()
 st.sidebar.write(f"Auto refresh every {REFRESH_INTERVAL} sec")
 
+# ensure MQTT subscriber is running (singleton)
+start_mqtt()
+
+# show temperature reading in sidebar
+with st.sidebar:
+    st.markdown("### 🌡️ Temperature")
+    temp_display = st.empty()
+    ts_display = st.empty()
+
+    val = latest_temp.get("value")
+    ts = latest_temp.get("ts")
+
+    if val is None:
+        temp_display.info("No reading yet")
+    else:
+        temp_display.metric(label="Temperature", value=str(val))
+        if ts:
+            ts_display.caption(f"Updated: {ts}")
+
 # ===================== HEADER =====================
-st.title("SBM – Multi Tunnel Defect Dashboard")
+st.title("Inline Defect Detection Dashboard - SBM")
 st.divider()
 
 # ===================== MAIN =====================
