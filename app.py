@@ -7,90 +7,151 @@ from datetime import datetime
 # ===================== CONFIG =====================
 TUNNELS = {
     "Tunnel 1": {
-        "image_dir": r"C:\Users\Abhishek\Downloads\Projects\SBM\Images\19-11-25",
-        "annot_dir": r"C:\Users\Abhishek\Downloads\Projects\SBM\Images\Defects\tunnel1"
+        "base_dir": "/home/voptimaise/basler_sensor_photos"
     },
     "Tunnel 2": {
-        "image_dir": r"C:\Users\Abhishek\Downloads\Projects\SBM\Images\10-11-25",
-        "annot_dir": r"C:\Users\Abhishek\Downloads\Projects\SBM\Images\Defects\tunnel2"
+        "base_dir": "/home/voptimaise/basler_sensor_photos"
     }
 }
 
-IMAGE_W = 260
-ANNOT_W = 260
-ZOOM_W = 650
+REFRESH_INTERVAL = 5  # seconds
 
-# ===================== PAGE SETUP =====================
+# ===================== PAGE =====================
 st.set_page_config(page_title="SBM Defect Dashboard", layout="wide")
 
-# ===================== SESSION STATE =====================
-for tunnel in TUNNELS:
-    st.session_state.setdefault(f"refresh_{tunnel}", True)
+# ===================== AUTO REFRESH =====================
+st.markdown(
+    f"""
+    <script>
+        setTimeout(function() {{
+            window.location.reload();
+        }}, {REFRESH_INTERVAL * 1000});
+    </script>
+    """,
+    unsafe_allow_html=True
+)
 
 # ===================== FUNCTIONS =====================
-def get_latest_image(folder, refresh_flag):
-    if not refresh_flag:
-        return st.session_state.get(f"cached_{folder}")
 
-    images = [
-        f for f in os.listdir(folder)
-        if f.lower().endswith((".jpg", ".jpeg", ".png"))
-    ]
-    if not images:
+def get_latest_coil_folder(base_dir):
+    if not os.path.exists(base_dir):
         return None
 
-    images.sort(key=lambda x: os.path.getmtime(os.path.join(folder, x)), reverse=True)
-    img = os.path.join(folder, images[0])
-    st.session_state[f"cached_{folder}"] = img
-    return img
+    folders = [
+        f for f in os.listdir(base_dir)
+        if os.path.isdir(os.path.join(base_dir, f)) and f.startswith("coil_")
+    ]
+
+    if not folders:
+        return None
+
+    folders.sort(
+        key=lambda x: os.path.getmtime(os.path.join(base_dir, x)),
+        reverse=True
+    )
+
+    return os.path.join(base_dir, folders[0])
 
 
-def get_all_annotations(annot_dir, image_path):
-    if not os.path.exists(annot_dir):
+def get_latest_images(base_dir, count=4):
+    coil_folder = get_latest_coil_folder(base_dir)
+
+    if not coil_folder or not os.path.exists(coil_folder):
+        return None, []
+
+    images = [
+        f for f in os.listdir(coil_folder)
+        if f.lower().endswith((".jpg", ".jpeg", ".png", ".bmp"))
+        and "annot" not in f.lower()
+    ]
+
+    if not images:
+        return coil_folder, []
+
+    images.sort(
+        key=lambda x: os.path.getmtime(os.path.join(coil_folder, x)),
+        reverse=True
+    )
+
+    images = images[:count]
+    full_paths = [os.path.join(coil_folder, img) for img in images]
+
+    return coil_folder, sorted(full_paths)
+
+
+def get_all_annotations(image_path):
+    if not image_path:
         return []
 
-    base_name = os.path.splitext(os.path.basename(image_path))[0]
+    folder = os.path.dirname(image_path)
+    base = os.path.splitext(os.path.basename(image_path))[0]
 
     annots = [
-        os.path.join(annot_dir, f)
-        for f in os.listdir(annot_dir)
-        if f.startswith(base_name) and f.lower().endswith((".jpg", ".png"))
+        os.path.join(folder, f)
+        for f in os.listdir(folder)
+        if f.startswith(base) and "annot" in f.lower()
     ]
 
     return sorted(annots)
 
 
 def load_meta(image_path):
+    if not image_path:
+        return {"defects": []}
+
     meta_path = os.path.splitext(image_path)[0] + ".json"
+
     if os.path.exists(meta_path):
         with open(meta_path) as f:
             return json.load(f)
+
     return {"defects": []}
 
 
 def save_meta(image_path, data):
     meta_path = os.path.splitext(image_path)[0] + ".json"
+
     with open(meta_path, "w") as f:
         json.dump(data, f, indent=4)
 
 
-def shift_stats():
+def shift_stats(base_dir):
     stats = {
         "A": {"Defect Confirmed": 0, "False Alarm": 0},
         "B": {"Defect Confirmed": 0, "False Alarm": 0},
         "C": {"Defect Confirmed": 0, "False Alarm": 0}
     }
 
-    for t in TUNNELS.values():
-        for f in os.listdir(t["image_dir"]):
-            if f.endswith(".json"):
-                with open(os.path.join(t["image_dir"], f)) as j:
-                    d = json.load(j)
-                    sh = d.get("shift")
-                    res = d.get("operator_decision")
-                    if sh in stats and res in stats[sh]:
-                        stats[sh][res] += 1
+    if not os.path.exists(base_dir):
+        return stats
+
+    for tunnel in os.listdir(base_dir):
+        tunnel_path = os.path.join(base_dir, tunnel)
+
+        if not os.path.isdir(tunnel_path):
+            continue
+
+        for coil in os.listdir(tunnel_path):
+            coil_path = os.path.join(tunnel_path, coil)
+
+            if not os.path.isdir(coil_path):
+                continue
+
+            for f in os.listdir(coil_path):
+                if f.endswith(".json"):
+                    try:
+                        with open(os.path.join(coil_path, f)) as j:
+                            d = json.load(j)
+                            sh = d.get("shift")
+                            res = d.get("operator_decision")
+
+                            if sh in stats and res in stats[sh]:
+                                stats[sh][res] += 1
+                    except:
+                        continue
+
     return stats
+
 
 # ===================== SIDEBAR =====================
 st.sidebar.title("Operator Details")
@@ -99,104 +160,123 @@ op_id = st.sidebar.text_input("Operator ID")
 shift = st.sidebar.selectbox("Shift", ["A", "B", "C"])
 
 st.sidebar.divider()
-st.sidebar.subheader("Defect Legend")
-st.sidebar.markdown("""
-🟥 Scratch – High  
-🟨 Dent – Medium  
-🟦 Lap / Overfill  
-🟩 Surface Mark  
-""")
+st.sidebar.write(f"Auto refresh every {REFRESH_INTERVAL} sec")
 
 # ===================== HEADER =====================
-st.title("Special Bar Mill – Defect Validation Dashboard")
-st.markdown("**Auto-matched multiple defect annotations per image**")
+st.title("SBM – Multi Tunnel Defect Dashboard")
 st.divider()
 
-# ===================== MAIN VIEW =====================
-c1, c2 = st.columns(2)
+# ===================== MAIN =====================
+cols_main = st.columns(2)
 
-for col, (tunnel, cfg) in zip([c1, c2], TUNNELS.items()):
-    refresh_key = f"refresh_{tunnel}"
-    img = get_latest_image(cfg["image_dir"], st.session_state[refresh_key])
+for col, (tunnel, cfg) in zip(cols_main, TUNNELS.items()):
 
     with col:
         st.subheader(tunnel)
 
-        if img:
-            annots = get_all_annotations(cfg["annot_dir"], img)
-            meta = load_meta(img)
+        coil_folder, images = get_latest_images(cfg["base_dir"], 4)
 
-            i1, i2 = st.columns(2)
+        if not coil_folder:
+            st.warning("No coil found")
+            continue
 
-            with i1:
-                st.markdown("**Original Image**")
-                st.image(Image.open(img), width=IMAGE_W)
+        st.info(f"📦 Current Coil: {os.path.basename(coil_folder)}")
 
-            with i2:
-                st.markdown("**Annotated Defects**")
-                if annots:
-                    for idx, a in enumerate(annots, start=1):
-                        st.image(Image.open(a), width=ANNOT_W)
-                        with st.expander(f"🔍 Zoom Annotation {idx}"):
-                            st.image(Image.open(a), width=ZOOM_W)
-                else:
-                    st.info("No annotations found")
+        if not images:
+            st.warning("No images found")
+            continue
 
-            st.markdown("### Detected Defects (List)")
-            if meta.get("defects"):
-                for d in meta["defects"]:
-                    st.markdown(
-                        f"- **{d['type']}** | Severity: {d['severity']} | Confidence: {d.get('confidence','NA')}"
-                    )
-            else:
-                st.warning("Defect list not provided by AI")
+        # ===================== DEFECT PRIORITY =====================
+        first_img = images[0]
+        annots = get_all_annotations(first_img)
 
-            decision = st.radio(
-                "Final decision:",
-                ["Not Validated", "Defect Confirmed", "False Alarm"],
-                key=f"dec_{tunnel}"
-            )
+        if annots:
+            st.markdown("### 🚨 Defect Detected")
+            for a in annots:
+                st.image(Image.open(a), width=700)
 
-            remark = st.text_area("Remarks", key=f"rem_{tunnel}")
+        # ===================== THUMBNAILS =====================
+        st.markdown("### 4 Camera Views")
 
-            if st.button(f"Save Validation – {tunnel}"):
-                if not op_name or not op_id:
-                    st.error("Operator Name & ID required")
-                elif decision == "Not Validated":
-                    st.error("Please select a decision")
-                else:
-                    meta.update({
-                        "operator_name": op_name,
-                        "operator_id": op_id,
-                        "shift": shift,
-                        "operator_decision": decision,
-                        "tunnel": tunnel,
-                        "remarks": remark,
-                        "validated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "annotation_files": [os.path.basename(a) for a in annots]
-                    })
+        thumb_cols = st.columns(4)
 
-                    save_meta(img, meta)
-                    st.session_state[refresh_key] = True
-                    st.success("Validation saved")
-                    st.rerun()
+        for i, img in enumerate(images):
+            with thumb_cols[i]:
+                if st.button(f"View {i+1}", key=f"{tunnel}_{i}"):
+                    st.session_state[f"zoom_{tunnel}"] = img
+
+                st.image(Image.open(img), width=140)
+
+        # ===================== FULL RES VIEW =====================
+        zoom_key = f"zoom_{tunnel}"
+        if zoom_key in st.session_state:
+            st.markdown("### 🔍 Full Resolution View")
+            st.image(Image.open(st.session_state[zoom_key]), use_column_width=True)
+
+        # ===================== DEFECT DETAILS =====================
+        meta = load_meta(first_img)
+
+        st.markdown("### Detected Defects")
+        if meta.get("defects"):
+            for d in meta["defects"]:
+                st.markdown(
+                    f"- **{d['type']}** | {d['severity']} | {d.get('confidence','NA')}"
+                )
         else:
-            st.warning("No image available")
+            st.info("No defect data available")
 
-# ===================== BOTTOM – SHIFT STATS =====================
+        # ===================== DECISION =====================
+        decision = st.radio(
+            f"Final Decision – {tunnel}",
+            ["Not Validated", "Defect Confirmed", "False Alarm"],
+            key=f"dec_{tunnel}"
+        )
+
+        remark = st.text_area(
+            f"Remarks – {tunnel}",
+            key=f"rem_{tunnel}"
+        )
+
+        if st.button(f"Save Decision – {tunnel}"):
+
+            if not op_name or not op_id:
+                st.error("Operator details required")
+
+            elif decision == "Not Validated":
+                st.error("Please select a decision")
+
+            else:
+                meta.update({
+                    "operator_name": op_name,
+                    "operator_id": op_id,
+                    "shift": shift,
+                    "operator_decision": decision,
+                    "tunnel": tunnel,
+                    "remarks": remark,
+                    "validated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "coil": os.path.basename(coil_folder)
+                })
+
+                save_meta(first_img, meta)
+                st.success("Saved successfully")
+                st.rerun()
+
+# ===================== STATS =====================
 st.divider()
-st.subheader("📊 Shift-wise Defect Statistics")
+st.subheader("📊 Shift-wise Statistics")
 
-stats = shift_stats()
+stats = shift_stats("/home/voptimaise/basler_sensor_photos")
+
 st.table({
     "Shift": list(stats.keys()),
     "Defect Confirmed": [v["Defect Confirmed"] for v in stats.values()],
     "False Alarm": [v["False Alarm"] for v in stats.values()],
-    "Total Validations": [
-        v["Defect Confirmed"] + v["False Alarm"] for v in stats.values()
+    "Total": [
+        v["Defect Confirmed"] + v["False Alarm"]
+        for v in stats.values()
     ]
 })
 
 # ===================== FOOTER =====================
 st.divider()
-st.caption("SBM Inline Vision System | Human-in-Loop Validation")
+st.caption("SBM Inline Vision System | 2 Tunnel × 4 View Dashboard")
