@@ -5,7 +5,7 @@ app:
   refresh_interval_seconds: 1
 
 images:
-  base_dir: /home/voptimaise/basler_sensor_photos
+  base_dir: /home/voptimaise/Projects/SBM/received_images
   extensions:
     - .jpg
     - .jpeg
