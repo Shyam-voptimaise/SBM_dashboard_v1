@@ -8,18 +8,79 @@ from typing import Any
 UID_KEYS = (
     "uid",
     "UID",
+    "uid_number",
+    "UID_number",
+    "uid_no",
+    "UID_NO",
     "image_uid",
     "imageUID",
     "coil_uid",
     "coilUID",
+    "coil_number",
+    "coilNumber",
+    "coil_no",
+    "coilNo",
     "frame_id",
     "frameID",
     "capture_id",
     "captureID",
 )
 
+SHARED_METADATA_FILENAMES = (
+    "metadata.json",
+    "meta.json",
+    "data.json",
+    "coil_metadata.json",
+)
+
+
+def _json_files(folder: Path) -> list[Path]:
+    try:
+        return sorted(folder.glob("*.json"), key=lambda path: path.name.lower())
+    except (OSError, PermissionError):
+        return []
+
+
+def metadata_candidates_for_image(image_path: Path) -> tuple[Path, ...]:
+    exact_path = image_path.with_suffix(".json")
+    candidates: list[Path] = [exact_path]
+    seen: set[Path] = {exact_path}
+
+    for file_name in SHARED_METADATA_FILENAMES:
+        candidate = image_path.parent / file_name
+        if candidate not in seen:
+            candidates.append(candidate)
+            seen.add(candidate)
+
+    image_stem = image_path.stem.lower()
+    json_paths = _json_files(image_path.parent)
+
+    for candidate in json_paths:
+        candidate_stem = candidate.stem.lower()
+        if candidate in seen:
+            continue
+        if image_stem == candidate_stem:
+            candidates.append(candidate)
+            seen.add(candidate)
+
+    for candidate in json_paths:
+        candidate_stem = candidate.stem.lower()
+        if candidate in seen:
+            continue
+        if image_stem in candidate_stem or candidate_stem in image_stem:
+            candidates.append(candidate)
+            seen.add(candidate)
+
+    if len(json_paths) == 1 and json_paths[0] not in seen:
+        candidates.append(json_paths[0])
+
+    return tuple(candidates)
+
 
 def metadata_path_for_image(image_path: Path) -> Path:
+    for candidate in metadata_candidates_for_image(image_path):
+        if candidate.exists():
+            return candidate
     return image_path.with_suffix(".json")
 
 
@@ -38,7 +99,13 @@ def load_metadata_file(meta_path: Path) -> dict[str, Any]:
 def load_image_metadata(image_path: Path | None) -> dict[str, Any]:
     if image_path is None:
         return {}
-    return load_metadata_file(metadata_path_for_image(image_path))
+
+    for candidate in metadata_candidates_for_image(image_path):
+        metadata = load_metadata_file(candidate)
+        if metadata:
+            return metadata
+
+    return {}
 
 
 def save_image_metadata(image_path: Path, data: dict[str, Any]) -> None:

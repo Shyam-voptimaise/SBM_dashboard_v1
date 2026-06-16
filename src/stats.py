@@ -10,6 +10,8 @@ import pandas as pd
 from image_store import (
     annotations_for_image,
     discover_coil_folders,
+    is_annotation_file,
+    is_image_file,
 )
 from metadata import (
     defect_count,
@@ -19,6 +21,7 @@ from metadata import (
 )
 from runtime_config import (
     ALL_TUNNELS,
+    IMAGE_EXTENSIONS,
     UNVALIDATED_DECISION,
     VALIDATION_DECISIONS,
     TunnelConfig,
@@ -51,10 +54,28 @@ def _mtime_datetime(path: Path) -> datetime | None:
 
 
 def _matching_image_for_metadata(meta_path: Path) -> Path | None:
-    for extension in (".jpg", ".jpeg", ".png", ".bmp"):
+    for extension in IMAGE_EXTENSIONS:
         candidate = meta_path.with_suffix(extension)
         if candidate.exists():
             return candidate
+
+    try:
+        image_paths = [
+            child
+            for child in meta_path.parent.iterdir()
+            if is_image_file(child) and not is_annotation_file(child)
+        ]
+    except (OSError, PermissionError):
+        image_paths = []
+
+    if len(image_paths) == 1:
+        return image_paths[0]
+    if image_paths:
+        return max(
+            image_paths,
+            key=lambda path: _mtime_datetime(path) or datetime.min,
+        )
+
     return None
 
 

@@ -18,6 +18,19 @@ CAMERA_TOKEN_PATTERN = re.compile(
 NOISE_TOKEN_PATTERN = re.compile(
     r"(?i)(^|[_\-\s.])(?:annot|annotation|defect|boxed|mask)(?=$|[_\-\s.])"
 )
+DATE_FOLDER_PATTERN = re.compile(
+    r"(?x)"
+    r"^(?:"
+    r"\d{4}[-_.]?\d{2}[-_.]?\d{2}"
+    r"|"
+    r"\d{2}[-_.]\d{2}[-_.]\d{4}"
+    r")$"
+)
+COIL_PREFIX_PATTERN = re.compile(r"(?i)^coil[_\-\s]*")
+CAMERA_ONLY_PATTERN = re.compile(
+    r"(?i)^(?:camera|cam|view|c)[_\-\s]*0?\d+$"
+)
+MAX_IMAGE_FOLDER_DEPTH = 4
 
 
 @dataclass(frozen=True)
@@ -71,21 +84,86 @@ def _has_images(path: Path) -> bool:
     )
 
 
+def _safe_resolve(path: Path) -> Path:
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path
+
+
+def _is_date_folder(path: Path) -> bool:
+    return bool(DATE_FOLDER_PATTERN.match(path.name))
+
+
+def _dedupe_paths(paths: list[Path]) -> tuple[Path, ...]:
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        resolved = _safe_resolve(path)
+        if resolved in seen:
+            continue
+        deduped.append(path)
+        seen.add(resolved)
+    return tuple(deduped)
+
+
+def _descendant_tunnel_roots(base_dir: Path, aliases: tuple[str, ...]) -> list[Path]:
+    roots: list[Path] = []
+    for child in _safe_iterdir(base_dir):
+        if not child.is_dir():
+            continue
+        for alias in aliases:
+            candidate = child / alias
+            if candidate.exists() and candidate.is_dir():
+                roots.append(candidate)
+    return sorted(roots, key=_mtime, reverse=True)
+
+
+def _image_container_folders(root: Path) -> list[Path]:
+    folders: list[Path] = []
+    queue: list[tuple[Path, int]] = [(root, 0)]
+    seen: set[Path] = set()
+
+    while queue:
+        current, depth = queue.pop(0)
+        resolved = _safe_resolve(current)
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+
+        if _has_images(current):
+            folders.append(current)
+
+        if depth >= MAX_IMAGE_FOLDER_DEPTH:
+            continue
+
+        subfolders = [
+            child
+            for child in _safe_iterdir(current)
+            if child.is_dir()
+        ]
+        queue.extend((child, depth + 1) for child in subfolders)
+
+    return folders
+
+
 def candidate_tunnel_roots(config: TunnelConfig) -> tuple[Path, ...]:
     base_dir = config.base_dir
     if not base_dir.exists() or not base_dir.is_dir():
         return ()
 
     tunnel_specific: list[Path] = []
-    seen: set[Path] = set()
     for alias in config.aliases:
         candidate = base_dir / alias
-        if candidate.exists() and candidate.is_dir() and candidate not in seen:
+        if candidate.exists() and candidate.is_dir():
             tunnel_specific.append(candidate)
-            seen.add(candidate)
 
     if tunnel_specific:
-        return tuple(tunnel_specific)
+        return _dedupe_paths(tunnel_specific)
+
+    dated_tunnel_roots = _descendant_tunnel_roots(base_dir, config.aliases)
+    if dated_tunnel_roots:
+        return _dedupe_paths(dated_tunnel_roots)
 
     return (base_dir,)
 
@@ -95,20 +173,12 @@ def discover_coil_folders(config: TunnelConfig) -> list[Path]:
     seen: set[Path] = set()
 
     for root in candidate_tunnel_roots(config):
-        root_coils = [
-            child
-            for child in _safe_iterdir(root)
-            if child.is_dir() and child.name.startswith("coil_")
-        ]
-
-        if root_coils:
-            for folder in root_coils:
-                if folder not in seen:
-                    coil_folders.append(folder)
-                    seen.add(folder)
-        elif _has_images(root):
-            coil_folders.append(root)
-            seen.add(root)
+        for folder in _image_container_folders(root):
+            resolved = _safe_resolve(folder)
+            if resolved in seen:
+                continue
+            coil_folders.append(folder)
+            seen.add(resolved)
 
     return sorted(coil_folders, key=_mtime, reverse=True)
 
@@ -127,6 +197,18 @@ def _clean_uid_from_stem(stem: str) -> str:
     cleaned = NOISE_TOKEN_PATTERN.sub("_", cleaned)
     cleaned = re.sub(r"[_\-\s.]+", "_", cleaned).strip("_-. ")
     return cleaned or stem
+
+
+def _uid_from_coil_folder(coil_folder: Path) -> str:
+    folder_name = coil_folder.name
+    cleaned = COIL_PREFIX_PATTERN.sub("", folder_name).strip("_-. ")
+    if cleaned and not _is_date_folder(coil_folder):
+        return cleaned
+    return folder_name
+
+
+def _is_camera_only_uid(uid: str) -> bool:
+    return bool(CAMERA_ONLY_PATTERN.match(uid))
 
 
 def parse_uid_from_image(image_path: Path, metadata: dict[str, Any]) -> str:
@@ -216,6 +298,8 @@ def image_groups_for_coil(tunnel: str, coil_folder: Path) -> list[ImageGroup]:
     for image in images:
         metadata = load_image_metadata(image)
         uid = parse_uid_from_image(image, metadata)
+        if _is_camera_only_uid(uid):
+            uid = _uid_from_coil_folder(coil_folder)
         grouped_images.setdefault(uid, []).append(image)
 
     confident_groups = {
@@ -231,7 +315,10 @@ def image_groups_for_coil(tunnel: str, coil_folder: Path) -> list[ImageGroup]:
         ]
     else:
         latest_images = images[:4]
-        fallback_uid = latest_images[0].stem
+        fallback_metadata = _group_metadata(latest_images)
+        fallback_uid = metadata_uid(fallback_metadata) or _uid_from_coil_folder(
+            coil_folder
+        )
         groups = [
             _build_group(tunnel, coil_folder, fallback_uid, latest_images, "latest")
         ]

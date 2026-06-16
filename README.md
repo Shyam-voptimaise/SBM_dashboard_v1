@@ -45,16 +45,16 @@ $env:SBM_RUNTIME_CONFIG="config/runtime.yaml"
 
 ## Image Data
 
-The default image base path is:
+The configured image base path is:
 
 ```text
-/home/voptimaise/basler_sensor_photos
+/home/voptimaise/Projects/SBM/received_images
 ```
 
 Override it when needed:
 
 ```powershell
-$env:SBM_IMAGE_BASE_DIR="/path/to/basler_sensor_photos"
+$env:SBM_IMAGE_BASE_DIR="/path/to/received_images"
 ```
 
 Tunnel-specific paths can also be set:
@@ -64,8 +64,24 @@ $env:SBM_TUNNEL_1_DIR="/path/to/tunnel_1"
 $env:SBM_TUNNEL_2_DIR="/path/to/tunnel_2"
 ```
 
-The app detects `coil_*` folders, groups camera images by UID when possible,
-and falls back to the latest four images when a UID cannot be parsed safely.
+The app detects image folders under date-based storage such as:
+
+```text
+received_images/
+  2026-06-16/
+    coil_12345/
+      camera_1.jpg
+      camera_2.jpg
+      camera_3.jpg
+      camera_4.jpg
+      metadata.json
+```
+
+Tunnel-specific layouts such as `Tunnel_1/2026-06-16/coil_12345` and
+`2026-06-16/Tunnel_1/coil_12345` are also supported. The dashboard opens on
+`Latest image` by default, and the UID selector can be used to view a specific
+UID or coil number. JSON metadata can either match the image name
+(`camera_1.json`) or be shared at the coil-folder level (`metadata.json`).
 Missing folders, images, annotations, and JSON files are handled with dashboard
 warnings instead of crashes.
 

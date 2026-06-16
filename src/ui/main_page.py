@@ -30,6 +30,8 @@ from ui.components import (
 )
 from ui.sidebar import SidebarState
 
+LATEST_GROUP_SELECTION = "__latest_image__"
+
 
 def _key(value: str) -> str:
     return (
@@ -59,7 +61,7 @@ def _group_by_identity(
 ) -> ImageGroup | None:
     if not groups:
         return None
-    if identity is None:
+    if identity in (None, LATEST_GROUP_SELECTION):
         return groups[0]
     for group in groups:
         if _group_identity(group) == identity:
@@ -71,6 +73,16 @@ def _uid_label(group: ImageGroup, uid_counts: Counter[str]) -> str:
     if uid_counts[group.uid] <= 1:
         return group.uid
     return f"{group.uid} ({group.coil})"
+
+
+def _uid_option_label(
+    identity: str,
+    groups_by_identity: dict[str, ImageGroup],
+    uid_counts: Counter[str],
+) -> str:
+    if identity == LATEST_GROUP_SELECTION:
+        return "Latest image"
+    return _uid_label(groups_by_identity[identity], uid_counts)
 
 
 def _selected_or_latest_group(
@@ -120,7 +132,11 @@ def render_main_page(sidebar_state: SidebarState) -> None:
             )
     else:
         groups = _groups_for_tunnel(tunnel_choice)
-        group_options = [_group_identity(group) for group in groups]
+        group_options = (
+            [LATEST_GROUP_SELECTION, *[_group_identity(group) for group in groups]]
+            if groups
+            else []
+        )
         groups_by_identity = {_group_identity(group): group for group in groups}
         uid_counts = Counter(group.uid for group in groups)
         selected_group: str | None = None
@@ -130,8 +146,9 @@ def render_main_page(sidebar_state: SidebarState) -> None:
                 selected_group = st.selectbox(
                     "UID",
                     group_options,
-                    format_func=lambda identity: _uid_label(
-                        groups_by_identity[identity],
+                    format_func=lambda identity: _uid_option_label(
+                        identity,
+                        groups_by_identity,
                         uid_counts,
                     ),
                     key=f"uid_select_{_key(tunnel_choice)}",
