@@ -52,9 +52,9 @@ validation:
 
 mqtt:
   brokers:
-    - localhost
     - voptimaipi5.local
-    - voptimaipi5
-  port: 1883
+  port: 8883
   topic: hotmetal/env/reading
+  tls_enabled: true
+  ca_file: /etc/mosquitto/certs/ca.crt
   connect_timeout_seconds: 2

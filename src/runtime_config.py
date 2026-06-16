@@ -224,6 +224,20 @@ def _as_float(value: Any, default: float) -> float:
         return default
 
 
+def _as_bool(value: Any, default: bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value in (None, ""):
+        return default
+
+    normalized = str(value).strip().lower()
+    if normalized in ("1", "true", "yes", "y", "on", "enabled"):
+        return True
+    if normalized in ("0", "false", "no", "n", "off", "disabled"):
+        return False
+    return default
+
+
 def _as_tuple(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
     if isinstance(value, (list, tuple)):
         items = tuple(str(item) for item in value if item not in (None, ""))
@@ -251,6 +265,10 @@ def _env_int(env_name: str, default: int) -> int:
 
 def _env_float(env_name: str, default: float) -> float:
     return _as_float(os.getenv(env_name), default)
+
+
+def _env_bool(env_name: str, default: bool) -> bool:
+    return _as_bool(os.getenv(env_name), default)
 
 
 def _normalize_env_key(name: str) -> str:
@@ -364,6 +382,14 @@ MQTT_PORT = _env_int("MQTT_PORT", _as_int(_get(("mqtt", "port"), None), 1883))
 MQTT_TOPIC = os.getenv(
     "MQTT_TOPIC",
     _as_str(_get(("mqtt", "topic"), None), "hotmetal/env/reading"),
+)
+MQTT_TLS_ENABLED = _env_bool(
+    "MQTT_TLS_ENABLED",
+    _as_bool(_get(("mqtt", "tls_enabled"), None), False),
+)
+MQTT_CA_FILE = os.getenv(
+    "MQTT_CA_FILE",
+    _as_str(_get(("mqtt", "ca_file"), None), ""),
 )
 MQTT_CONNECT_TIMEOUT = _env_float(
     "MQTT_CONNECT_TIMEOUT",

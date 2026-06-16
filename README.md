@@ -87,10 +87,10 @@ warnings instead of crashes.
 
 ## MQTT Temperature
 
-The sidebar reads DS18B20 temperature messages from:
+The sidebar reads camera temperature messages over MQTT/TLS from:
 
 ```text
-hotmetal/env/reading
+voptimaipi5.local:8883 | hotmetal/env/reading
 ```
 
 Expected payload:
@@ -99,13 +99,21 @@ Expected payload:
 {"sensor":"DS18B20","temp_c":35.875,"timestamp":18129,"status":"ok"}
 ```
 
-When the dashboard runs on a laptop, `localhost` is the laptop, not the Pi.
-Set the MQTT broker to the Pi hostname or IP in the sidebar, or start Streamlit
-with an environment variable:
+The dashboard defaults match this command:
 
 ```powershell
-$env:MQTT_BROKERS="voptimaipi5.local,voptimaipi5,192.168.1.50"
-uv run streamlit run src/app.py
+mosquitto_sub -h voptimaipi5.local -p 8883 --cafile /etc/mosquitto/certs/ca.crt -t hotmetal/env/reading
+```
+
+When running somewhere other than the Pi, make sure the CA file is available at
+the configured path or update it in the sidebar. You can also override MQTT
+settings with environment variables:
+
+```powershell
+$env:MQTT_BROKERS="voptimaipi5.local"
+$env:MQTT_PORT="8883"
+$env:MQTT_TLS_ENABLED="true"
+$env:MQTT_CA_FILE="/etc/mosquitto/certs/ca.crt"
 ```
 
 ## Project Structure

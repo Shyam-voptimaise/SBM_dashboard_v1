@@ -7,8 +7,10 @@ import streamlit as st
 from mqtt import extract_mqtt_command_values, start_mqtt
 from runtime_config import (
     MQTT_BROKERS,
+    MQTT_CA_FILE,
     MQTT_CONNECT_TIMEOUT,
     MQTT_PORT,
+    MQTT_TLS_ENABLED,
     MQTT_TOPIC,
     REFRESH_INTERVAL,
     SHIFTS,
@@ -38,15 +40,29 @@ def render_sidebar() -> SidebarState:
         value=MQTT_BROKERS,
         help="Enter only a host/IP like localhost. Pasting mosquitto_sub -h ... also works.",
     )
+    mqtt_port = st.sidebar.number_input(
+        "MQTT port",
+        min_value=1,
+        max_value=65535,
+        value=MQTT_PORT,
+        step=1,
+    )
     mqtt_topic = st.sidebar.text_input("MQTT topic", value=MQTT_TOPIC)
-    connect_brokers, connect_topic, command_was_pasted = extract_mqtt_command_values(
+    mqtt_tls_enabled = st.sidebar.checkbox("MQTT TLS", value=MQTT_TLS_ENABLED)
+    mqtt_ca_file = st.sidebar.text_input("MQTT CA file", value=MQTT_CA_FILE)
+
+    mqtt_settings = extract_mqtt_command_values(
         mqtt_brokers,
         mqtt_topic,
+        int(mqtt_port),
+        mqtt_tls_enabled,
+        mqtt_ca_file,
     )
 
-    if command_was_pasted:
+    if mqtt_settings.command_was_pasted:
+        tls_text = "TLS enabled" if mqtt_settings.tls_enabled else "TLS disabled"
         st.sidebar.caption(
-            f"Using broker `{connect_brokers}` and topic `{connect_topic}` from pasted command."
+            f"Using `{mqtt_settings.brokers}:{mqtt_settings.port}` and topic `{mqtt_settings.topic}` from pasted command. {tls_text}."
         )
 
     if st.sidebar.button("Reconnect MQTT"):
@@ -54,10 +70,12 @@ def render_sidebar() -> SidebarState:
         st.rerun()
 
     temp_state, _mqtt_client = start_mqtt(
-        connect_brokers,
-        connect_topic,
-        MQTT_PORT,
+        mqtt_settings.brokers,
+        mqtt_settings.topic,
+        mqtt_settings.port,
         MQTT_CONNECT_TIMEOUT,
+        mqtt_settings.tls_enabled,
+        mqtt_settings.ca_file,
     )
     latest_temp = temp_state.snapshot()
     latest_temp["ts"] = latest_temp.get("updated_at")
@@ -83,7 +101,8 @@ def render_sidebar() -> SidebarState:
         if sensor_status:
             st.caption(f"Sensor: {sensor_status}")
         if broker:
-            st.caption(f"MQTT: {broker} | {connect_topic}")
+            security = "TLS" if mqtt_settings.tls_enabled else "Plain"
+            st.caption(f"MQTT: {broker} | {mqtt_settings.topic} | {security}")
         if error:
             st.error(error)
 

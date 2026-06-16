@@ -5,6 +5,7 @@ import os
 import shlex
 import socket
 import threading
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -58,13 +59,40 @@ def parse_broker_list(raw_brokers: str, default_port: int) -> list[tuple[str, in
     return brokers or [("localhost", default_port)]
 
 
+@dataclass(frozen=True)
+class MqttConnectionSettings:
+    brokers: str
+    topic: str
+    port: int
+    tls_enabled: bool
+    ca_file: str
+    command_was_pasted: bool
+
+
+def _next_option_value(tokens: list[str], index: int) -> str | None:
+    next_token = tokens[index + 1] if index + 1 < len(tokens) else None
+    if next_token and not next_token.startswith("-"):
+        return next_token
+    return None
+
+
 def extract_mqtt_command_values(
     raw_brokers: str,
     current_topic: str,
-) -> tuple[str, str, bool]:
+    current_port: int,
+    current_tls_enabled: bool,
+    current_ca_file: str,
+) -> MqttConnectionSettings:
     text = str(raw_brokers).strip()
     if "mosquitto_sub" not in text:
-        return text, current_topic, False
+        return MqttConnectionSettings(
+            brokers=text,
+            topic=current_topic,
+            port=current_port,
+            tls_enabled=current_tls_enabled,
+            ca_file=current_ca_file,
+            command_was_pasted=False,
+        )
 
     try:
         tokens = shlex.split(text)
@@ -72,30 +100,65 @@ def extract_mqtt_command_values(
         tokens = text.split()
 
     host: str | None = None
-    port: str | None = None
+    port = current_port
     topic: str | None = None
+    ca_file = current_ca_file
+    tls_enabled = current_tls_enabled
 
     for index, token in enumerate(tokens):
-        next_token = tokens[index + 1] if index + 1 < len(tokens) else None
+        next_token = _next_option_value(tokens, index)
 
         if token in ("-h", "--host") and next_token:
             host = next_token
         elif token.startswith("-h") and len(token) > 2:
             host = token[2:]
         elif token in ("-p", "--port") and next_token:
-            port = next_token
+            try:
+                port = int(next_token)
+            except ValueError:
+                pass
         elif token.startswith("-p") and len(token) > 2:
-            port = token[2:]
+            try:
+                port = int(token[2:])
+            except ValueError:
+                pass
         elif token in ("-t", "--topic") and next_token:
             topic = next_token
         elif token.startswith("-t") and len(token) > 2:
             topic = token[2:]
+        elif token in ("--cafile", "--capath") and next_token:
+            ca_file = next_token
+            tls_enabled = True
+        elif token.startswith("--cafile="):
+            ca_file = token.partition("=")[2]
+            tls_enabled = True
+        elif token.startswith("--capath="):
+            ca_file = token.partition("=")[2]
+            tls_enabled = True
+        elif token in ("--insecure", "--tls-alpn"):
+            tls_enabled = True
+
+    if port == 8883:
+        tls_enabled = True
 
     if not host:
-        return text, current_topic, False
+        return MqttConnectionSettings(
+            brokers=text,
+            topic=current_topic,
+            port=current_port,
+            tls_enabled=current_tls_enabled,
+            ca_file=current_ca_file,
+            command_was_pasted=False,
+        )
 
-    broker = f"{host}:{port}" if port else host
-    return broker, topic or current_topic, True
+    return MqttConnectionSettings(
+        brokers=host,
+        topic=topic or current_topic,
+        port=port,
+        tls_enabled=tls_enabled,
+        ca_file=ca_file,
+        command_was_pasted=True,
+    )
 
 
 def parse_temperature_payload(payload: str) -> dict[str, Any]:
@@ -105,10 +168,42 @@ def parse_temperature_payload(payload: str) -> dict[str, Any]:
         data = payload
 
     if isinstance(data, dict):
+        camera = data.get("camera")
+        nested_camera = camera if isinstance(camera, dict) else {}
         raw_temp = (
             data.get("temp_c")
             if data.get("temp_c") is not None
-            else data.get("temperature", data.get("temp"))
+            else data.get(
+                "temperature_c",
+                data.get(
+                    "tempC",
+                    data.get(
+                        "camera_temp_c",
+                        data.get(
+                            "camera_temperature_c",
+                            data.get(
+                                "camera_temp",
+                                data.get(
+                                    "camera_temperature",
+                                    data.get(
+                                        "temperature",
+                                        data.get(
+                                            "temp",
+                                            nested_camera.get(
+                                                "temp_c",
+                                                nested_camera.get(
+                                                    "temperature",
+                                                    nested_camera.get("temp"),
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            )
         )
 
         try:
@@ -118,7 +213,7 @@ def parse_temperature_payload(payload: str) -> dict[str, Any]:
 
         return {
             "value": value,
-            "sensor": data.get("sensor"),
+            "sensor": data.get("sensor") or data.get("camera_id") or data.get("camera"),
             "sensor_status": data.get("status"),
             "source_timestamp": data.get("timestamp"),
             "raw_payload": payload,
@@ -163,6 +258,8 @@ def start_mqtt(
     topic: str,
     default_port: int,
     connect_timeout: float,
+    tls_enabled: bool,
+    ca_file: str,
 ) -> tuple[TemperatureState, mqtt.Client | None]:
     state = TemperatureState()
     last_error: str | None = None
@@ -180,6 +277,13 @@ def start_mqtt(
         client = create_mqtt_client(
             f"sbm-dashboard-temp-{os.getpid()}-{host.replace('.', '-')}-{port}"
         )
+
+        try:
+            if tls_enabled:
+                client.tls_set(ca_certs=ca_file.strip() or None)
+        except Exception as exc:
+            last_error = f"{broker_label} - MQTT TLS setup failed: {exc}"
+            continue
 
         def on_connect(
             client: mqtt.Client,
