@@ -25,6 +25,7 @@ from stats import (
 )
 from ui.components import (
     open_image,
+    render_hover_zoom_image,
     render_image_grid,
     render_status_badge,
 )
@@ -231,11 +232,7 @@ def render_annotations(group: ImageGroup) -> None:
             if image is None:
                 st.warning(f"Could not load {annotation_path.name}")
             else:
-                st.image(
-                    image,
-                    caption=annotation_path.name,
-                    use_container_width=True,
-                )
+                render_hover_zoom_image(annotation_path, annotation_path.name)
 
 
 def render_defect_and_validation(
