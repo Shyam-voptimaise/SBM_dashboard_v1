@@ -15,5 +15,19 @@ dependencies = [
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+py-modules = [
+    "app",
+    "image_store",
+    "metadata",
+    "mqtt",
+    "runtime_config",
+    "stats",
+]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["ui*"]

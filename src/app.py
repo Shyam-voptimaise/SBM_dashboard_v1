@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import streamlit as st
 
-from sbm_dashboard.config import APP_TITLE, PAGE_TITLE, REFRESH_INTERVAL
-from sbm_dashboard.ui.components import render_auto_refresh
-from sbm_dashboard.ui.main_page import render_main_page
-from sbm_dashboard.ui.sidebar import render_sidebar
+from runtime_config import APP_FOOTER, APP_TITLE, PAGE_TITLE, REFRESH_INTERVAL
+from ui.components import render_auto_refresh
+from ui.main_page import render_main_page
+from ui.sidebar import render_sidebar
 
 
 def main() -> None:
@@ -19,7 +19,7 @@ def main() -> None:
     render_main_page(sidebar_state)
 
     st.divider()
-    st.caption("SBM Inline Vision System | 2 Tunnel x 4 View Dashboard")
+    st.caption(APP_FOOTER)
 
 
 if __name__ == "__main__":

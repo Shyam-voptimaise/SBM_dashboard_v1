@@ -6,10 +6,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from sbm_dashboard.config import TunnelConfig
-from sbm_dashboard.metadata import load_image_metadata, metadata_uid
+from metadata import load_image_metadata, metadata_uid
+from runtime_config import IMAGE_EXTENSIONS, TunnelConfig
 
-IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp")
 EXPLICIT_UID_PATTERN = re.compile(
     r"(?i)(?:uid|frame|capture|image)[_\-\s]*(?:id)?[_\-\s]*([A-Za-z0-9]+(?:[_\-][A-Za-z0-9]+)*)"
 )

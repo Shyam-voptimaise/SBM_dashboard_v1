@@ -4,14 +4,15 @@ from dataclasses import dataclass
 
 import streamlit as st
 
-from sbm_dashboard.config import (
+from mqtt import extract_mqtt_command_values, start_mqtt
+from runtime_config import (
     MQTT_BROKERS,
     MQTT_CONNECT_TIMEOUT,
     MQTT_PORT,
     MQTT_TOPIC,
     REFRESH_INTERVAL,
+    SHIFTS,
 )
-from sbm_dashboard.mqtt import extract_mqtt_command_values, start_mqtt
 
 
 @dataclass(frozen=True)
@@ -25,7 +26,7 @@ def render_sidebar() -> SidebarState:
     st.sidebar.title("Operator Details")
     op_name = st.sidebar.text_input("Operator Name")
     op_id = st.sidebar.text_input("Operator ID")
-    shift = st.sidebar.selectbox("Shift", ["A", "B", "C"])
+    shift = st.sidebar.selectbox("Shift", SHIFTS)
 
     st.sidebar.divider()
     st.sidebar.write(f"Auto refresh every {REFRESH_INTERVAL} sec")

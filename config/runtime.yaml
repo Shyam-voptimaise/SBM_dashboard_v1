@@ -1,0 +1,60 @@
+app:
+  page_title: SBM Defect Dashboard
+  title: Inline Defect Detection Dashboard - SBM
+  footer: SBM Inline Vision System | 2 Tunnel x 4 View Dashboard
+  refresh_interval_seconds: 1
+
+images:
+  base_dir: /home/voptimaise/basler_sensor_photos
+  extensions:
+    - .jpg
+    - .jpeg
+    - .png
+    - .bmp
+
+tunnels:
+  Tunnel 1:
+    env: SBM_TUNNEL_1_DIR
+    base_dir:
+    aliases:
+      - Tunnel 1
+      - Tunnel_1
+      - tunnel_1
+      - tunnel1
+      - T1
+      - t1
+  Tunnel 2:
+    env: SBM_TUNNEL_2_DIR
+    base_dir:
+    aliases:
+      - Tunnel 2
+      - Tunnel_2
+      - tunnel_2
+      - tunnel2
+      - T2
+      - t2
+
+filters:
+  all_tunnels_label: All Tunnels
+
+operator:
+  shifts:
+    - A
+    - B
+    - C
+
+validation:
+  unvalidated_decision: Not Validated
+  decisions:
+    - Not Validated
+    - Defect Confirmed
+    - False Alarm
+
+mqtt:
+  brokers:
+    - localhost
+    - voptimaipi5.local
+    - voptimaipi5
+  port: 1883
+  topic: hotmetal/env/reading
+  connect_timeout_seconds: 2

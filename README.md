@@ -23,7 +23,24 @@ uv sync
 Run the dashboard:
 
 ```powershell
-uv run streamlit run app.py
+uv run streamlit run src/app.py
+```
+
+## Runtime Configuration
+
+Runtime settings are stored in:
+
+```text
+config/runtime.yaml
+```
+
+The file owns application titles, refresh timing, image paths, tunnel aliases,
+operator shifts, validation choices, image extensions, and MQTT defaults.
+
+Use a different runtime file when needed:
+
+```powershell
+$env:SBM_RUNTIME_CONFIG="config/runtime.yaml"
 ```
 
 ## Image Data
@@ -72,25 +89,26 @@ with an environment variable:
 
 ```powershell
 $env:MQTT_BROKERS="voptimaipi5.local,voptimaipi5,192.168.1.50"
-uv run streamlit run app.py
+uv run streamlit run src/app.py
 ```
 
 ## Project Structure
 
 ```text
 SBM_dashboard_v1/
-  app.py
+  config/
+    runtime.yaml
   pyproject.toml
   README.md
   src/
-    sbm_dashboard/
-      config.py
-      mqtt.py
-      image_store.py
-      metadata.py
-      stats.py
-      ui/
-        sidebar.py
-        main_page.py
-        components.py
+    app.py
+    runtime_config.py
+    mqtt.py
+    image_store.py
+    metadata.py
+    stats.py
+    ui/
+      sidebar.py
+      main_page.py
+      components.py
 ```

@@ -7,16 +7,21 @@ from typing import Any, Literal
 
 import pandas as pd
 
-from sbm_dashboard.config import ALL_TUNNELS, TunnelConfig
-from sbm_dashboard.image_store import (
+from image_store import (
     annotations_for_image,
     discover_coil_folders,
 )
-from sbm_dashboard.metadata import (
+from metadata import (
     defect_count,
     load_metadata_file,
     metadata_uid,
     parse_datetime,
+)
+from runtime_config import (
+    ALL_TUNNELS,
+    UNVALIDATED_DECISION,
+    VALIDATION_DECISIONS,
+    TunnelConfig,
 )
 
 CoilStatus = Literal["Defects detected", "No defects", "Unknown"]
@@ -90,7 +95,7 @@ def collect_metadata_records(
                         "UID": uid,
                         "Status": get_coil_status(meta, annotations),
                         "Operator Decision": str(
-                            meta.get("operator_decision") or "Not Validated"
+                            meta.get("operator_decision") or UNVALIDATED_DECISION
                         ),
                         "Shift": str(meta.get("shift") or ""),
                         "Validated At": (
@@ -152,11 +157,15 @@ def summary_counts(records: list[dict[str, Any]]) -> dict[str, int]:
     status_counts = Counter(record.get("Status") for record in records)
     decision_counts = Counter(record.get("Operator Decision") for record in records)
 
-    return {
+    summary = {
         "Total records": len(records),
         "Defects detected": status_counts["Defects detected"],
         "No defects": status_counts["No defects"],
         "Unknown": status_counts["Unknown"],
-        "Defect Confirmed": decision_counts["Defect Confirmed"],
-        "False Alarm": decision_counts["False Alarm"],
     }
+
+    for decision in VALIDATION_DECISIONS:
+        if decision != UNVALIDATED_DECISION:
+            summary[decision] = decision_counts[decision]
+
+    return summary

@@ -6,27 +6,29 @@ from pathlib import Path
 
 import streamlit as st
 
-from sbm_dashboard.config import (
+from image_store import ImageGroup, image_groups_for_tunnel
+from metadata import load_image_metadata, save_image_metadata
+from runtime_config import (
     ALL_TUNNELS,
     TUNNEL_FILTER_OPTIONS,
     TUNNEL_NAMES,
     TUNNELS,
+    UNVALIDATED_DECISION,
+    VALIDATION_DECISIONS,
 )
-from sbm_dashboard.image_store import ImageGroup, image_groups_for_tunnel
-from sbm_dashboard.metadata import load_image_metadata, save_image_metadata
-from sbm_dashboard.stats import (
+from stats import (
     collect_metadata_records,
     filter_records,
     get_coil_status,
     records_to_dataframe,
     summary_counts,
 )
-from sbm_dashboard.ui.components import (
+from ui.components import (
     open_image,
     render_image_grid,
     render_status_badge,
 )
-from sbm_dashboard.ui.sidebar import SidebarState
+from ui.sidebar import SidebarState
 
 
 def _key(value: str) -> str:
@@ -252,7 +254,7 @@ def render_validation_form(
 ) -> None:
     decision = st.radio(
         f"Final Decision - {group.tunnel}",
-        ["Not Validated", "Defect Confirmed", "False Alarm"],
+        VALIDATION_DECISIONS,
         key=f"dec_{section_key}_{_group_key(group)}",
     )
 
@@ -274,7 +276,7 @@ def render_validation_form(
             st.error("Operator details required")
             return
 
-        if decision == "Not Validated":
+        if decision == UNVALIDATED_DECISION:
             st.error("Please select a decision")
             return
 
@@ -319,7 +321,7 @@ def render_stats_section() -> None:
         tunnel_filter = st.selectbox(
             "Stats Tunnel",
             TUNNEL_FILTER_OPTIONS,
-            index=2,
+            index=len(TUNNEL_NAMES),
             key="stats_tunnel_filter",
         )
     with from_col:
@@ -334,7 +336,7 @@ def render_stats_section() -> None:
     filtered_records = filter_records(records, tunnel_filter, from_date, to_date)
     counts = summary_counts(filtered_records)
 
-    metric_columns = st.columns(6)
+    metric_columns = st.columns(len(counts))
     for column, (label, value) in zip(metric_columns, counts.items()):
         column.metric(label, value)
 
