@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -75,6 +76,14 @@ def _mtime(path: Path) -> float:
 def _modified_datetime(path: Path) -> datetime | None:
     timestamp = _mtime(path)
     return datetime.fromtimestamp(timestamp) if timestamp else None
+
+
+def _stat_signature(path: Path) -> tuple[str, int, int]:
+    try:
+        stat = path.stat()
+    except (OSError, PermissionError):
+        return (str(path), 0, 0)
+    return (str(path), stat.st_mtime_ns, stat.st_size)
 
 
 def _has_images(path: Path) -> bool:
@@ -340,3 +349,27 @@ def image_groups_for_tunnel(tunnel: str, config: TunnelConfig) -> list[ImageGrou
         key=lambda group: group.modified_at or datetime.min,
         reverse=True,
     )
+
+
+def _coil_data_signature(coil_folder: Path) -> tuple[Any, ...]:
+    images = _image_files_in_coil(coil_folder)
+    return (
+        _stat_signature(coil_folder),
+        tuple(_stat_signature(image) for image in images[:4]),
+    )
+
+
+def latest_data_signature(
+    tunnels: Mapping[str, TunnelConfig],
+    limit_per_tunnel: int = 20,
+) -> tuple[Any, ...]:
+    signature: list[tuple[Any, ...]] = []
+    for tunnel, config in tunnels.items():
+        coil_folders = discover_coil_folders(config)[:limit_per_tunnel]
+        signature.append(
+            (
+                tunnel,
+                tuple(_coil_data_signature(coil_folder) for coil_folder in coil_folders),
+            )
+        )
+    return tuple(signature)
