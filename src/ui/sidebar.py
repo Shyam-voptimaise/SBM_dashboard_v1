@@ -31,12 +31,7 @@ def render_sidebar() -> SidebarState:
     shift = st.sidebar.selectbox("Shift", SHIFTS)
 
     st.sidebar.divider()
-    refresh_text = (
-        f"Checking for new coil every {REFRESH_INTERVAL} sec"
-        if REFRESH_INTERVAL > 0
-        else "New coil check disabled"
-    )
-    st.sidebar.write(refresh_text)
+    st.sidebar.write(f"Auto refresh every {REFRESH_INTERVAL} sec")
 
     # MQTT broker can be the Pi hostname/IP when running this dashboard on a laptop.
     st.sidebar.divider()

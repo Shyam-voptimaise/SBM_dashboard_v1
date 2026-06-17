@@ -15,6 +15,19 @@ ZOOM_STEP = 25
 DEFAULT_ZOOM = 100
 
 
+def render_auto_refresh(interval_seconds: int) -> None:
+    st.markdown(
+        f"""
+        <script>
+            setTimeout(function() {{
+                window.location.reload();
+            }}, {interval_seconds * 1000});
+        </script>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_status_badge(status: str) -> None:
     styles = {
         "Defects detected": ("#991b1b", "#fee2e2", "#fecaca"),
