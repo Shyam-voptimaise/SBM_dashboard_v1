@@ -9,6 +9,11 @@ from pathlib import Path
 import streamlit as st
 from PIL import Image, UnidentifiedImageError
 
+MIN_ZOOM = 25
+MAX_ZOOM = 400
+ZOOM_STEP = 25
+DEFAULT_ZOOM = 100
+
 
 def render_auto_refresh(interval_seconds: int) -> None:
     st.markdown(
@@ -72,6 +77,23 @@ def _image_data_uri(path: Path) -> str | None:
     return f"data:{mime_type};base64,{encoded}"
 
 
+def _image_dimensions(path: Path) -> tuple[int, int] | None:
+    try:
+        with Image.open(path) as image:
+            return image.size
+    except (OSError, UnidentifiedImageError):
+        return None
+
+
+def _clamp_zoom(value: int) -> int:
+    return max(MIN_ZOOM, min(MAX_ZOOM, value))
+
+
+def _adjust_zoom(zoom_key: str, delta: int) -> None:
+    current_zoom = int(st.session_state.get(zoom_key, DEFAULT_ZOOM))
+    st.session_state[zoom_key] = _clamp_zoom(current_zoom + delta)
+
+
 def render_hover_zoom_image(
     image_path: Path,
     caption: str,
@@ -94,6 +116,91 @@ def render_hover_zoom_image(
                 alt="{html.escape(caption)}"
             />
             <div class="sbm-hover-zoom-caption">{html.escape(caption)}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_full_resolution_image(
+    image_path: Path,
+    caption: str,
+    key_prefix: str,
+) -> None:
+    data_uri = _image_data_uri(image_path)
+    dimensions = _image_dimensions(image_path)
+    if data_uri is None or dimensions is None:
+        st.warning(f"Could not load {image_path.name}")
+        return
+
+    zoom_key = f"{key_prefix}_zoom_level"
+    st.session_state.setdefault(zoom_key, DEFAULT_ZOOM)
+
+    control_columns = st.columns([1, 3, 1, 1])
+    with control_columns[0]:
+        st.button(
+            "Zoom out",
+            key=f"{key_prefix}_zoom_out",
+            icon=":material/zoom_out:",
+            on_click=_adjust_zoom,
+            args=(zoom_key, -ZOOM_STEP),
+            use_container_width=True,
+        )
+    with control_columns[1]:
+        zoom_level = st.slider(
+            "Zoom",
+            min_value=MIN_ZOOM,
+            max_value=MAX_ZOOM,
+            step=ZOOM_STEP,
+            format="%d%%",
+            key=zoom_key,
+        )
+    with control_columns[2]:
+        st.button(
+            "Zoom in",
+            key=f"{key_prefix}_zoom_in",
+            icon=":material/zoom_in:",
+            on_click=_adjust_zoom,
+            args=(zoom_key, ZOOM_STEP),
+            use_container_width=True,
+        )
+    with control_columns[3]:
+        st.button(
+            "Reset",
+            key=f"{key_prefix}_zoom_reset",
+            icon=":material/center_focus_strong:",
+            on_click=lambda: st.session_state.update({zoom_key: DEFAULT_ZOOM}),
+            use_container_width=True,
+        )
+
+    width, _ = dimensions
+    display_width = max(1, int(width * int(zoom_level) / 100))
+    st.markdown(
+        f"""
+        <style>
+            .sbm-full-resolution-shell {{
+                width: 100%;
+                max-height: 78vh;
+                overflow: auto;
+                background: #111827;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 0.75rem;
+            }}
+
+            .sbm-full-resolution-image {{
+                display: block;
+                max-width: none;
+                height: auto;
+            }}
+        </style>
+        <div class="sbm-full-resolution-shell">
+            <img
+                class="sbm-full-resolution-image"
+                style="width: {display_width}px;"
+                src="{data_uri}"
+                alt="{html.escape(caption)}"
+            />
         </div>
         """,
         unsafe_allow_html=True,
@@ -185,7 +292,9 @@ def render_image_grid(images: tuple[Path, ...], key_prefix: str) -> None:
 
     zoom_path = st.session_state.get(f"{key_prefix}_zoom")
     if zoom_path:
-        image = open_image(Path(zoom_path))
-        if image is not None:
-            st.markdown("### Full Resolution View")
-            st.image(image, use_container_width=True)
+        st.markdown("### Full Resolution View")
+        render_full_resolution_image(
+            Path(zoom_path),
+            Path(zoom_path).name,
+            f"{key_prefix}_full_resolution",
+        )
