@@ -1,17 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any
 
 import streamlit as st
 
-from mqtt import (
-    MqttConnectionSettings,
-    TemperatureState,
-    extract_mqtt_command_values,
-    start_mqtt,
-)
+from mqtt import extract_mqtt_command_values, start_mqtt
 from runtime_config import (
     MQTT_BROKERS,
     MQTT_CA_FILE,
@@ -19,6 +12,7 @@ from runtime_config import (
     MQTT_PORT,
     MQTT_TLS_ENABLED,
     MQTT_TOPIC,
+    REFRESH_INTERVAL,
     SHIFTS,
 )
 
@@ -30,64 +24,6 @@ class SidebarState:
     shift: str
 
 
-def _short_payload(payload: Any) -> str:
-    text = str(payload)
-    return text if len(text) <= 160 else f"{text[:157]}..."
-
-
-def _ca_file_missing(mqtt_settings: MqttConnectionSettings) -> bool:
-    ca_file = mqtt_settings.ca_file.strip()
-    return (
-        mqtt_settings.tls_enabled
-        and bool(ca_file)
-        and not Path(ca_file).expanduser().exists()
-    )
-
-
-@st.fragment(run_every="1s")
-def render_temperature_panel(
-    temp_state: TemperatureState,
-    mqtt_settings: MqttConnectionSettings,
-) -> None:
-    latest_temp = temp_state.snapshot()
-    val = latest_temp.get("value")
-    ts = latest_temp.get("updated_at")
-    sensor = latest_temp.get("sensor")
-    sensor_status = latest_temp.get("sensor_status")
-    broker = latest_temp.get("broker")
-    connected = latest_temp.get("connected")
-    error = latest_temp.get("error")
-    raw_payload = latest_temp.get("raw_payload")
-
-    st.markdown("### Temperature")
-
-    if val is None:
-        if connected:
-            st.info("Connected, waiting for temperature message")
-        else:
-            st.warning("MQTT not connected")
-    else:
-        st.metric(label="Temperature", value=f"{val:.2f} C")
-        if ts:
-            st.caption(f"Updated: {ts}")
-
-    if sensor:
-        st.caption(f"Sensor: {sensor}")
-    if sensor_status:
-        st.caption(f"Sensor status: {sensor_status}")
-
-    security = "TLS" if mqtt_settings.tls_enabled else "Plain"
-    broker_label = broker or f"{mqtt_settings.brokers}:{mqtt_settings.port}"
-    st.caption(f"MQTT: {broker_label} | {mqtt_settings.topic} | {security}")
-
-    if _ca_file_missing(mqtt_settings):
-        st.warning(f"CA file not found: {mqtt_settings.ca_file}")
-    if raw_payload and val is None:
-        st.caption(f"Last payload: {_short_payload(raw_payload)}")
-    if error:
-        st.error(error)
-
-
 def render_sidebar() -> SidebarState:
     st.sidebar.title("Operator Details")
     op_name = st.sidebar.text_input("Operator Name")
@@ -95,7 +31,12 @@ def render_sidebar() -> SidebarState:
     shift = st.sidebar.selectbox("Shift", SHIFTS)
 
     st.sidebar.divider()
-    st.sidebar.write("Dashboard auto-refresh off")
+    refresh_text = (
+        f"Checking for new coil every {REFRESH_INTERVAL} sec"
+        if REFRESH_INTERVAL > 0
+        else "New coil check disabled"
+    )
+    st.sidebar.write(refresh_text)
 
     # MQTT broker can be the Pi hostname/IP when running this dashboard on a laptop.
     st.sidebar.divider()
@@ -141,8 +82,33 @@ def render_sidebar() -> SidebarState:
         mqtt_settings.tls_enabled,
         mqtt_settings.ca_file,
     )
+    latest_temp = temp_state.snapshot()
+    latest_temp["ts"] = latest_temp.get("updated_at")
 
     with st.sidebar:
-        render_temperature_panel(temp_state, mqtt_settings)
+        st.markdown("### Temperature")
+        temp_display = st.empty()
+        ts_display = st.empty()
+
+        val = latest_temp.get("value")
+        ts = latest_temp.get("ts")
+        sensor_status = latest_temp.get("sensor_status")
+        broker = latest_temp.get("broker")
+        error = latest_temp.get("error")
+
+        if val is None:
+            temp_display.info("No temperature reading yet")
+        else:
+            temp_display.metric(label="Temperature", value=f"{val:.2f} C")
+            if ts:
+                ts_display.caption(f"Updated: {ts}")
+
+        if sensor_status:
+            st.caption(f"Sensor: {sensor_status}")
+        if broker:
+            security = "TLS" if mqtt_settings.tls_enabled else "Plain"
+            st.caption(f"MQTT: {broker} | {mqtt_settings.topic} | {security}")
+        if error:
+            st.error(error)
 
     return SidebarState(operator_name=op_name, operator_id=op_id, shift=shift)

@@ -7,7 +7,6 @@ import socket
 import threading
 from dataclasses import dataclass
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 import paho.mqtt.client as mqtt
@@ -271,12 +270,6 @@ def start_mqtt(
         try:
             with socket.create_connection((host, port), timeout=connect_timeout):
                 pass
-        except socket.gaierror as exc:
-            last_error = (
-                f"{broker_label} - hostname not found: {exc}. "
-                "Use the Pi IP address if the .local name does not resolve."
-            )
-            continue
         except OSError as exc:
             last_error = f"{broker_label} - {exc}"
             continue
@@ -284,18 +277,10 @@ def start_mqtt(
         client = create_mqtt_client(
             f"sbm-dashboard-temp-{os.getpid()}-{host.replace('.', '-')}-{port}"
         )
-        client.reconnect_delay_set(min_delay=1, max_delay=30)
 
         try:
             if tls_enabled:
-                ca_path = ca_file.strip()
-                ca_certs: str | None = None
-                if ca_path and not Path(ca_path).expanduser().exists():
-                    last_error = f"{broker_label} - MQTT CA file not found: {ca_path}"
-                    continue
-                if ca_path:
-                    ca_certs = str(Path(ca_path).expanduser())
-                client.tls_set(ca_certs=ca_certs)
+                client.tls_set(ca_certs=ca_file.strip() or None)
         except Exception as exc:
             last_error = f"{broker_label} - MQTT TLS setup failed: {exc}"
             continue
@@ -318,7 +303,7 @@ def start_mqtt(
                 )
 
         def on_disconnect(client: mqtt.Client, userdata: Any, *args: Any) -> None:
-            reason_code = args[1] if len(args) > 1 else args[0] if args else None
+            reason_code = args[0] if args else None
             state.update(
                 connected=False,
                 error=f"MQTT disconnected: {reason_code}",
