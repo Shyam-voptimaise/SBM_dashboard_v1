@@ -7,11 +7,10 @@ import re
 from pathlib import Path
 
 import streamlit as st
-import streamlit.components.v1 as components
 from PIL import Image, UnidentifiedImageError
 
 MIN_ZOOM = 25
-MAX_ZOOM = 800
+MAX_ZOOM = 400
 ZOOM_STEP = 25
 DEFAULT_ZOOM = 100
 
@@ -73,6 +72,15 @@ def _image_dimensions(path: Path) -> tuple[int, int] | None:
         return None
 
 
+def _clamp_zoom(value: int) -> int:
+    return max(MIN_ZOOM, min(MAX_ZOOM, value))
+
+
+def _adjust_zoom(zoom_key: str, delta: int) -> None:
+    current_zoom = int(st.session_state.get(zoom_key, DEFAULT_ZOOM))
+    st.session_state[zoom_key] = _clamp_zoom(current_zoom + delta)
+
+
 def render_hover_zoom_image(
     image_path: Path,
     caption: str,
@@ -112,185 +120,77 @@ def render_full_resolution_image(
         st.warning(f"Could not load {image_path.name}")
         return
 
-    width, height = dimensions
-    components.html(
+    zoom_key = f"{key_prefix}_zoom_level"
+    st.session_state.setdefault(zoom_key, DEFAULT_ZOOM)
+
+    control_columns = st.columns([1, 3, 1, 1])
+    with control_columns[0]:
+        st.button(
+            "Zoom out",
+            key=f"{key_prefix}_zoom_out",
+            icon=":material/zoom_out:",
+            on_click=_adjust_zoom,
+            args=(zoom_key, -ZOOM_STEP),
+            use_container_width=True,
+        )
+    with control_columns[1]:
+        zoom_level = st.slider(
+            "Zoom",
+            min_value=MIN_ZOOM,
+            max_value=MAX_ZOOM,
+            step=ZOOM_STEP,
+            format="%d%%",
+            key=zoom_key,
+        )
+    with control_columns[2]:
+        st.button(
+            "Zoom in",
+            key=f"{key_prefix}_zoom_in",
+            icon=":material/zoom_in:",
+            on_click=_adjust_zoom,
+            args=(zoom_key, ZOOM_STEP),
+            use_container_width=True,
+        )
+    with control_columns[3]:
+        st.button(
+            "Reset",
+            key=f"{key_prefix}_zoom_reset",
+            icon=":material/center_focus_strong:",
+            on_click=lambda: st.session_state.update({zoom_key: DEFAULT_ZOOM}),
+            use_container_width=True,
+        )
+
+    width, _ = dimensions
+    display_width = max(1, int(width * int(zoom_level) / 100))
+    st.markdown(
         f"""
-        <!doctype html>
-        <html>
-        <head>
-        <meta charset="utf-8" />
         <style>
-            * {{
-                box-sizing: border-box;
-            }}
-
-            body {{
-                margin: 0;
-                font-family: Arial, sans-serif;
-                color: #111827;
-                background: #ffffff;
-            }}
-
-            .sbm-full-resolution-viewer {{
+            .sbm-full-resolution-shell {{
                 width: 100%;
-                border: 1px solid #d1d5db;
-                border-radius: 6px;
-                overflow: hidden;
-                background: #ffffff;
-            }}
-
-            .sbm-full-resolution-toolbar {{
-                display: flex;
-                align-items: center;
-                gap: 8px;
-                min-height: 44px;
-                padding: 8px;
-                border-bottom: 1px solid #d1d5db;
-                background: #f9fafb;
-            }}
-
-            .sbm-full-resolution-toolbar button {{
-                width: 38px;
-                height: 32px;
-                border: 1px solid #cbd5e1;
-                border-radius: 6px;
-                background: #ffffff;
-                color: #111827;
-                cursor: pointer;
-                font-size: 18px;
-                line-height: 1;
-            }}
-
-            .sbm-full-resolution-toolbar button:hover {{
-                background: #f3f4f6;
-            }}
-
-            .sbm-full-resolution-toolbar input {{
-                flex: 1;
-                min-width: 140px;
-            }}
-
-            .sbm-full-resolution-value {{
-                width: 56px;
-                text-align: right;
-                font-size: 13px;
-                color: #374151;
-            }}
-
-            .sbm-full-resolution-stage {{
-                height: 700px;
+                max-height: 78vh;
                 overflow: auto;
                 background: #111827;
-                padding: 12px;
+                border: 1px solid #d1d5db;
+                border-radius: 6px;
+                padding: 0.75rem;
             }}
 
             .sbm-full-resolution-image {{
                 display: block;
-                width: {width}px;
-                height: auto;
                 max-width: none;
-                transform-origin: top left;
-                image-rendering: auto;
-            }}
-
-            .sbm-full-resolution-caption {{
-                padding: 6px 8px;
-                border-top: 1px solid #d1d5db;
-                color: #4b5563;
-                font-size: 12px;
-                overflow-wrap: anywhere;
-                background: #ffffff;
+                height: auto;
             }}
         </style>
-        </head>
-        <body>
-        <div class="sbm-full-resolution-viewer">
-            <div class="sbm-full-resolution-toolbar">
-                <button id="zoomOut" type="button" title="Zoom out">-</button>
-                <input
-                    id="zoomRange"
-                    type="range"
-                    min="{MIN_ZOOM}"
-                    max="{MAX_ZOOM}"
-                    step="{ZOOM_STEP}"
-                    value="{DEFAULT_ZOOM}"
-                    aria-label="Zoom"
-                />
-                <button id="zoomIn" type="button" title="Zoom in">+</button>
-                <button id="zoomReset" type="button" title="Reset zoom">100</button>
-                <span id="zoomValue" class="sbm-full-resolution-value">
-                    {DEFAULT_ZOOM}%
-                </span>
-            </div>
-            <div id="stage" class="sbm-full-resolution-stage">
-                <img
-                    id="fullImage"
-                    class="sbm-full-resolution-image"
-                    src="{data_uri}"
-                    alt="{html.escape(caption)}"
-                    width="{width}"
-                    height="{height}"
-                />
-            </div>
-            <div class="sbm-full-resolution-caption">{html.escape(caption)}</div>
+        <div class="sbm-full-resolution-shell">
+            <img
+                class="sbm-full-resolution-image"
+                style="width: {display_width}px;"
+                src="{data_uri}"
+                alt="{html.escape(caption)}"
+            />
         </div>
-        <script>
-            const minZoom = {MIN_ZOOM};
-            const maxZoom = {MAX_ZOOM};
-            const zoomStep = {ZOOM_STEP};
-            const naturalWidth = {width};
-            const image = document.getElementById("fullImage");
-            const range = document.getElementById("zoomRange");
-            const value = document.getElementById("zoomValue");
-            const stage = document.getElementById("stage");
-
-            function clampZoom(zoom) {{
-                return Math.max(minZoom, Math.min(maxZoom, zoom));
-            }}
-
-            function setZoom(nextZoom) {{
-                const previousZoom = Number(range.value);
-                const zoom = clampZoom(Number(nextZoom));
-                const centerX = stage.scrollLeft + stage.clientWidth / 2;
-                const centerY = stage.scrollTop + stage.clientHeight / 2;
-                const ratio = previousZoom > 0 ? zoom / previousZoom : 1;
-
-                range.value = zoom;
-                value.textContent = `${{zoom}}%`;
-                image.style.width = `${{Math.round(naturalWidth * zoom / 100)}}px`;
-
-                stage.scrollLeft = centerX * ratio - stage.clientWidth / 2;
-                stage.scrollTop = centerY * ratio - stage.clientHeight / 2;
-            }}
-
-            document.getElementById("zoomOut").addEventListener("click", () => {{
-                setZoom(Number(range.value) - zoomStep);
-            }});
-            document.getElementById("zoomIn").addEventListener("click", () => {{
-                setZoom(Number(range.value) + zoomStep);
-            }});
-            document.getElementById("zoomReset").addEventListener("click", () => {{
-                setZoom(100);
-            }});
-            range.addEventListener("input", () => {{
-                setZoom(range.value);
-            }});
-            stage.addEventListener("wheel", (event) => {{
-                if (!event.ctrlKey) {{
-                    return;
-                }}
-                event.preventDefault();
-                const delta = event.deltaY > 0 ? -zoomStep : zoomStep;
-                setZoom(Number(range.value) + delta);
-            }}, {{ passive: false }});
-
-            setZoom({DEFAULT_ZOOM});
-        </script>
-        </body>
-        </html>
         """,
-        height=800,
-        scrolling=False,
+        unsafe_allow_html=True,
     )
 
 
@@ -304,8 +204,14 @@ def render_image_grid(images: tuple[Path, ...], key_prefix: str) -> None:
         <style>
             .sbm-hover-zoom-frame {
                 position: relative;
+                isolation: isolate;
+                z-index: 1;
                 margin-bottom: 0.75rem;
-                overflow: hidden;
+                overflow: visible;
+            }
+
+            .sbm-hover-zoom-frame:hover {
+                z-index: 1000;
             }
 
             .sbm-hover-zoom-image {
@@ -316,6 +222,16 @@ def render_image_grid(images: tuple[Path, ...], key_prefix: str) -> None:
                 background: #111827;
                 border: 1px solid #d1d5db;
                 border-radius: 6px;
+                transition:
+                    transform 120ms ease,
+                    box-shadow 120ms ease;
+                transform-origin: var(--sbm-zoom-origin, center center);
+                cursor: zoom-in;
+            }
+
+            .sbm-hover-zoom-frame:hover .sbm-hover-zoom-image {
+                transform: scale(2);
+                box-shadow: 0 16px 42px rgba(17, 24, 39, 0.32);
             }
 
             .sbm-hover-zoom-caption {
@@ -341,6 +257,13 @@ def render_image_grid(images: tuple[Path, ...], key_prefix: str) -> None:
                 continue
 
             image_path = images[index]
+            zoom_origin = (
+                "left center"
+                if index == 0
+                else "right center"
+                if index == 3
+                else "center center"
+            )
             if st.button(f"View {index + 1}", key=f"{key_prefix}_view_{index}"):
                 st.session_state[f"{key_prefix}_zoom"] = str(image_path)
 
@@ -351,6 +274,7 @@ def render_image_grid(images: tuple[Path, ...], key_prefix: str) -> None:
                 render_hover_zoom_image(
                     image_path,
                     camera_caption(index, image_path),
+                    zoom_origin,
                 )
 
     zoom_path = st.session_state.get(f"{key_prefix}_zoom")
