@@ -22,6 +22,7 @@ class SidebarState:
     operator_name: str
     operator_id: str
     shift: str
+    enhance_images: bool
 
 
 def render_sidebar() -> SidebarState:
@@ -29,6 +30,20 @@ def render_sidebar() -> SidebarState:
     op_name = st.sidebar.text_input("Operator Name")
     op_id = st.sidebar.text_input("Operator ID")
     shift = st.sidebar.selectbox("Shift", SHIFTS)
+
+    st.sidebar.divider()
+    st.sidebar.markdown("### Image View")
+    enhance_images = bool(st.session_state.get("enhance_coil_images", False))
+    enhance_label = (
+        "Show Original Coil Photo" if enhance_images else "Enhance Coil Photo"
+    )
+    if st.sidebar.button(enhance_label, use_container_width=True):
+        st.session_state["enhance_coil_images"] = not enhance_images
+        st.rerun()
+    enhance_images = bool(st.session_state.get("enhance_coil_images", False))
+    st.sidebar.caption(
+        f"Current view: {'Enhanced' if enhance_images else 'Original'}"
+    )
 
     st.sidebar.divider()
     st.sidebar.write(f"Auto refresh every {REFRESH_INTERVAL} sec")
@@ -106,4 +121,9 @@ def render_sidebar() -> SidebarState:
         if error:
             st.error(error)
 
-    return SidebarState(operator_name=op_name, operator_id=op_id, shift=shift)
+    return SidebarState(
+        operator_name=op_name,
+        operator_id=op_id,
+        shift=shift,
+        enhance_images=enhance_images,
+    )

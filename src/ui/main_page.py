@@ -197,7 +197,11 @@ def render_tunnel_section(
         st.info(f"Current Coil: {group.coil}")
         with st.container(border=True):
             st.markdown(f"**UID:** `{group.uid}`")
-            render_image_grid(group.images, f"{section_key}_{group_key}")
+            render_image_grid(
+                group.images,
+                f"{section_key}_{group_key}",
+                enhance_images=sidebar_state.enhance_images,
+            )
 
     with status_column:
         render_status_panel(group)

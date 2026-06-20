@@ -8,6 +8,7 @@ camera images.
 - Tunnel selector with `Tunnel 1`, `Tunnel 2`, and `All Tunnels`
 - UID selector for grouped four-camera image captures
 - Defect status display using annotations and JSON metadata
+- Sidebar button for on-demand enhanced coil image viewing
 - Operator validation flow with JSON metadata persistence
 - Shift and validation statistics with tunnel/date filters
 - Sidebar MQTT temperature display
