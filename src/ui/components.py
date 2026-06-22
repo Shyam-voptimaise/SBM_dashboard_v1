@@ -124,6 +124,8 @@ def render_zoomable_image(
                 <button type="button" class="zoom-out" aria-label="Zoom out">-</button>
                 <span class="zoom-level">100%</span>
                 <button type="button" class="zoom-in" aria-label="Zoom in">+</button>
+                <span class="zoom-spacer"></span>
+                <button type="button" class="zoom-maximize" aria-label="Maximize full resolution view">Maximize</button>
             </div>
             <div class="zoom-stage" tabindex="0">
                 <img src="{data_url}" alt="{safe_caption}" draggable="false">
@@ -137,6 +139,8 @@ def render_zoomable_image(
                 overflow: hidden;
                 background: #f9fafb;
                 font-family: sans-serif;
+                display: flex;
+                flex-direction: column;
             }}
             #{viewer_id} .zoom-toolbar {{
                 display: flex;
@@ -160,6 +164,15 @@ def render_zoomable_image(
             }}
             #{viewer_id} button:hover {{
                 background: #f3f4f6;
+            }}
+            #{viewer_id} .zoom-spacer {{
+                flex: 1;
+            }}
+            #{viewer_id} .zoom-maximize {{
+                width: auto;
+                min-width: 5.5rem;
+                padding: 0 0.65rem;
+                font-size: 0.85rem;
             }}
             #{viewer_id} .zoom-level {{
                 min-width: 3.5rem;
@@ -194,6 +207,17 @@ def render_zoomable_image(
                 background: #ffffff;
                 border-top: 1px solid #d1d5db;
             }}
+            #{viewer_id}:fullscreen {{
+                width: 100vw;
+                height: 100vh;
+                border: 0;
+                border-radius: 0;
+                background: #111827;
+            }}
+            #{viewer_id}:fullscreen .zoom-stage {{
+                flex: 1;
+                height: auto;
+            }}
         </style>
         <script>
             (() => {{
@@ -205,6 +229,7 @@ def render_zoomable_image(
                 const level = root.querySelector(".zoom-level");
                 const zoomIn = root.querySelector(".zoom-in");
                 const zoomOut = root.querySelector(".zoom-out");
+                const maximize = root.querySelector(".zoom-maximize");
                 let scale = 1;
 
                 function clamp(value) {{
@@ -221,8 +246,32 @@ def render_zoomable_image(
                     render();
                 }}
 
+                function renderMaximizeState() {{
+                    const maximized = document.fullscreenElement === root;
+                    maximize.textContent = maximized ? "Exit" : "Maximize";
+                    maximize.setAttribute(
+                        "aria-label",
+                        maximized
+                            ? "Exit maximized full resolution view"
+                            : "Maximize full resolution view"
+                    );
+                }}
+
                 zoomIn.addEventListener("click", () => update(scale + 0.25));
                 zoomOut.addEventListener("click", () => update(scale - 0.25));
+                maximize.addEventListener("click", async () => {{
+                    try {{
+                        if (document.fullscreenElement === root) {{
+                            await document.exitFullscreen();
+                        }} else if (root.requestFullscreen) {{
+                            await root.requestFullscreen();
+                        }}
+                    }} catch (error) {{
+                        maximize.textContent = "Unavailable";
+                        window.setTimeout(renderMaximizeState, 1200);
+                    }}
+                }});
+                document.addEventListener("fullscreenchange", renderMaximizeState);
                 stage.addEventListener("wheel", (event) => {{
                     event.preventDefault();
                     const step = event.deltaY < 0 ? 0.15 : -0.15;
@@ -230,6 +279,7 @@ def render_zoomable_image(
                 }}, {{ passive: false }});
 
                 render();
+                renderMaximizeState();
             }})();
         </script>
         """,
