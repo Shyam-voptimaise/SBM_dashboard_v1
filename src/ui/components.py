@@ -231,9 +231,10 @@ def render_zoomable_image(
                 const zoomOut = root.querySelector(".zoom-out");
                 const maximize = root.querySelector(".zoom-maximize");
                 let scale = 1;
+                const maxScale = 20;
 
                 function clamp(value) {{
-                    return Math.min(6, Math.max(0.25, value));
+                    return Math.min(maxScale, Math.max(0.25, value));
                 }}
 
                 function render() {{
@@ -257,8 +258,8 @@ def render_zoomable_image(
                     );
                 }}
 
-                zoomIn.addEventListener("click", () => update(scale + 0.25));
-                zoomOut.addEventListener("click", () => update(scale - 0.25));
+                zoomIn.addEventListener("click", () => update(scale + (scale >= 6 ? 1 : 0.25)));
+                zoomOut.addEventListener("click", () => update(scale - (scale > 6 ? 1 : 0.25)));
                 maximize.addEventListener("click", async () => {{
                     try {{
                         if (document.fullscreenElement === root) {{
@@ -274,7 +275,8 @@ def render_zoomable_image(
                 document.addEventListener("fullscreenchange", renderMaximizeState);
                 stage.addEventListener("wheel", (event) => {{
                     event.preventDefault();
-                    const step = event.deltaY < 0 ? 0.15 : -0.15;
+                    const stepSize = scale >= 6 ? 0.5 : 0.15;
+                    const step = event.deltaY < 0 ? stepSize : -stepSize;
                     update(scale + step);
                 }}, {{ passive: false }});
 
@@ -300,16 +302,22 @@ def render_image_grid(
     if len(images) < 4:
         st.warning(f"Only {len(images)} camera image(s) found for this UID.")
 
+    display_images = images[:4]
+    zoom_key = f"{key_prefix}_zoom"
+    display_image_paths = [str(path) for path in display_images]
+    if st.session_state.get(zoom_key) not in display_image_paths:
+        st.session_state[zoom_key] = display_image_paths[0]
+
     image_columns = st.columns(4)
     for index in range(4):
         with image_columns[index]:
-            if index >= len(images):
+            if index >= len(display_images):
                 st.empty()
                 continue
 
-            image_path = images[index]
+            image_path = display_images[index]
             if st.button(f"View {index + 1}", key=f"{key_prefix}_view_{index}"):
-                st.session_state[f"{key_prefix}_zoom"] = str(image_path)
+                st.session_state[zoom_key] = str(image_path)
 
             try:
                 image = open_display_image(image_path, enhance_images)
@@ -327,7 +335,7 @@ def render_image_grid(
                     use_container_width=True,
                 )
 
-    zoom_path = st.session_state.get(f"{key_prefix}_zoom")
+    zoom_path = st.session_state.get(zoom_key)
     if zoom_path:
         try:
             image = open_display_image(Path(zoom_path), enhance_images)
