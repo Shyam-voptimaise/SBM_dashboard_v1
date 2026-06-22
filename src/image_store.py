@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +25,15 @@ DATE_FOLDER_PATTERN = re.compile(
     r"|"
     r"\d{2}[-_.]\d{2}[-_.]\d{4}"
     r")$"
+)
+DATE_FOLDER_FORMATS = (
+    "%Y-%m-%d",
+    "%Y_%m_%d",
+    "%Y.%m.%d",
+    "%Y%m%d",
+    "%d-%m-%Y",
+    "%d_%m_%Y",
+    "%d.%m.%Y",
 )
 COIL_PREFIX_PATTERN = re.compile(r"(?i)^coil[_\-\s]*")
 CAMERA_ONLY_PATTERN = re.compile(
@@ -91,8 +100,24 @@ def _safe_resolve(path: Path) -> Path:
         return path
 
 
+def parse_date_folder_name(name: str) -> date | None:
+    if not DATE_FOLDER_PATTERN.match(name):
+        return None
+
+    for date_format in DATE_FOLDER_FORMATS:
+        try:
+            return datetime.strptime(name, date_format).date()
+        except ValueError:
+            continue
+    return None
+
+
+def _folder_date(path: Path) -> date | None:
+    return parse_date_folder_name(path.name)
+
+
 def _is_date_folder(path: Path) -> bool:
-    return bool(DATE_FOLDER_PATTERN.match(path.name))
+    return _folder_date(path) is not None
 
 
 def _dedupe_paths(paths: list[Path]) -> tuple[Path, ...]:
@@ -105,6 +130,35 @@ def _dedupe_paths(paths: list[Path]) -> tuple[Path, ...]:
         deduped.append(path)
         seen.add(resolved)
     return tuple(deduped)
+
+
+def _alias_roots(root: Path, aliases: tuple[str, ...]) -> list[Path]:
+    roots: list[Path] = []
+    for alias in aliases:
+        candidate = root / alias
+        if candidate.exists() and candidate.is_dir():
+            roots.append(candidate)
+    return roots
+
+
+def _date_folders_under(root: Path, capture_date: date | None = None) -> list[Path]:
+    folders: list[Path] = []
+    for child in _safe_iterdir(root):
+        if not child.is_dir():
+            continue
+
+        child_date = _folder_date(child)
+        if child_date is None:
+            continue
+        if capture_date is not None and child_date != capture_date:
+            continue
+        folders.append(child)
+
+    return sorted(
+        folders,
+        key=lambda path: (_folder_date(path) or date.min, _mtime(path)),
+        reverse=True,
+    )
 
 
 def _descendant_tunnel_roots(base_dir: Path, aliases: tuple[str, ...]) -> list[Path]:
@@ -147,17 +201,48 @@ def _image_container_folders(root: Path) -> list[Path]:
     return folders
 
 
-def candidate_tunnel_roots(config: TunnelConfig) -> tuple[Path, ...]:
+def _candidate_tunnel_roots_for_date(
+    config: TunnelConfig,
+    capture_date: date,
+) -> tuple[Path, ...]:
     base_dir = config.base_dir
     if not base_dir.exists() or not base_dir.is_dir():
         return ()
 
-    tunnel_specific: list[Path] = []
-    for alias in config.aliases:
-        candidate = base_dir / alias
-        if candidate.exists() and candidate.is_dir():
-            tunnel_specific.append(candidate)
+    roots: list[Path] = []
+    tunnel_specific = _alias_roots(base_dir, config.aliases)
+    for tunnel_root in tunnel_specific:
+        if _folder_date(tunnel_root) == capture_date:
+            roots.append(tunnel_root)
+        roots.extend(_date_folders_under(tunnel_root, capture_date))
 
+    if roots:
+        return _dedupe_paths(sorted(roots, key=_mtime, reverse=True))
+
+    date_roots = (
+        [base_dir]
+        if _folder_date(base_dir) == capture_date
+        else _date_folders_under(base_dir, capture_date)
+    )
+    for date_root in date_roots:
+        dated_tunnel_roots = _alias_roots(date_root, config.aliases)
+        roots.extend(dated_tunnel_roots or [date_root])
+
+    return _dedupe_paths(sorted(roots, key=_mtime, reverse=True))
+
+
+def candidate_tunnel_roots(
+    config: TunnelConfig,
+    capture_date: date | None = None,
+) -> tuple[Path, ...]:
+    if capture_date is not None:
+        return _candidate_tunnel_roots_for_date(config, capture_date)
+
+    base_dir = config.base_dir
+    if not base_dir.exists() or not base_dir.is_dir():
+        return ()
+
+    tunnel_specific = _alias_roots(base_dir, config.aliases)
     if tunnel_specific:
         return _dedupe_paths(tunnel_specific)
 
@@ -168,11 +253,42 @@ def candidate_tunnel_roots(config: TunnelConfig) -> tuple[Path, ...]:
     return (base_dir,)
 
 
-def discover_coil_folders(config: TunnelConfig) -> list[Path]:
+def available_capture_dates(configs: tuple[TunnelConfig, ...]) -> tuple[date, ...]:
+    capture_dates: set[date] = set()
+    scanned_roots: set[Path] = set()
+
+    for config in configs:
+        base_dir = config.base_dir
+        if not base_dir.exists() or not base_dir.is_dir():
+            continue
+
+        roots = [base_dir, *_alias_roots(base_dir, config.aliases)]
+        for root in roots:
+            resolved = _safe_resolve(root)
+            if resolved in scanned_roots:
+                continue
+            scanned_roots.add(resolved)
+
+            root_date = _folder_date(root)
+            if root_date is not None:
+                capture_dates.add(root_date)
+
+            for date_folder in _date_folders_under(root):
+                folder_date = _folder_date(date_folder)
+                if folder_date is not None:
+                    capture_dates.add(folder_date)
+
+    return tuple(sorted(capture_dates, reverse=True))
+
+
+def discover_coil_folders(
+    config: TunnelConfig,
+    capture_date: date | None = None,
+) -> list[Path]:
     coil_folders: list[Path] = []
     seen: set[Path] = set()
 
-    for root in candidate_tunnel_roots(config):
+    for root in candidate_tunnel_roots(config, capture_date):
         for folder in _image_container_folders(root):
             resolved = _safe_resolve(folder)
             if resolved in seen:
@@ -330,9 +446,13 @@ def image_groups_for_coil(tunnel: str, coil_folder: Path) -> list[ImageGroup]:
     )
 
 
-def image_groups_for_tunnel(tunnel: str, config: TunnelConfig) -> list[ImageGroup]:
+def image_groups_for_tunnel(
+    tunnel: str,
+    config: TunnelConfig,
+    capture_date: date | None = None,
+) -> list[ImageGroup]:
     groups: list[ImageGroup] = []
-    for coil_folder in discover_coil_folders(config):
+    for coil_folder in discover_coil_folders(config, capture_date):
         groups.extend(image_groups_for_coil(tunnel, coil_folder))
 
     return sorted(
