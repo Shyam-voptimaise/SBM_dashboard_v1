@@ -32,7 +32,6 @@ from ui.sidebar import SidebarState
 
 LATEST_GROUP_SELECTION = "__latest_image__"
 CAPTURE_DATE_KEY = "main_capture_date"
-UID_SEARCH_KEY = "main_uid_search"
 
 
 def _key(value: str) -> str:
@@ -51,76 +50,6 @@ def _coerce_date(value: object) -> date | None:
     if isinstance(value, date):
         return value
     return None
-
-
-def _compact_search_value(value: object) -> str:
-    return "".join(char.lower() for char in str(value) if char.isalnum())
-
-
-def _group_search_values(group: ImageGroup) -> tuple[str, ...]:
-    values = [
-        group.uid,
-        group.coil,
-        group.coil_folder.name,
-        str(group.coil_folder),
-    ]
-    for key in ("coil", "coil_id", "coilId", "uid", "image_uid", "imageUID"):
-        value = group.metadata.get(key)
-        if value not in (None, ""):
-            values.append(str(value))
-    return tuple(values)
-
-
-def _search_rank(group: ImageGroup, query: str) -> int | None:
-    query_text = query.strip().lower()
-    compact_query = _compact_search_value(query)
-    if not query_text:
-        return 0
-
-    best_rank: int | None = None
-    for value in _group_search_values(group):
-        candidate = value.lower()
-        compact_candidate = _compact_search_value(value)
-        if candidate == query_text or compact_candidate == compact_query:
-            rank = 0
-        elif candidate.startswith(query_text) or (
-            compact_query and compact_candidate.startswith(compact_query)
-        ):
-            rank = 1
-        elif query_text in candidate or (
-            compact_query and compact_query in compact_candidate
-        ):
-            rank = 2
-        else:
-            continue
-
-        best_rank = rank if best_rank is None else min(best_rank, rank)
-
-    return best_rank
-
-
-def _group_timestamp(group: ImageGroup) -> float:
-    return group.modified_at.timestamp() if group.modified_at else 0.0
-
-
-def _filter_groups(groups: list[ImageGroup], query: str) -> list[ImageGroup]:
-    if not query.strip():
-        return groups
-    if not _compact_search_value(query):
-        return []
-
-    ranked_groups = [
-        (rank, group)
-        for group in groups
-        if (rank := _search_rank(group, query)) is not None
-    ]
-    return [
-        group
-        for _, group in sorted(
-            ranked_groups,
-            key=lambda item: (item[0], -_group_timestamp(item[1])),
-        )
-    ]
 
 
 def _groups_for_tunnel(
@@ -181,8 +110,8 @@ def _group_by_identity(
 
 def _uid_label(group: ImageGroup, uid_counts: Counter[str]) -> str:
     if uid_counts[group.uid] <= 1:
-        return group.uid
-    return f"{group.uid} ({group.coil})"
+        return f"{group.uid} | Coil: {group.coil}"
+    return f"{group.uid} | Coil: {group.coil} | {group.tunnel}"
 
 
 def _uid_option_label(
@@ -203,17 +132,43 @@ def _selected_or_latest_group(
     return _group_by_identity(groups, selected_group)
 
 
+def _render_uid_selector(tunnel_name: str, groups: list[ImageGroup]) -> str | None:
+    group_identities = [_group_identity(group) for group in groups]
+    if not group_identities:
+        st.selectbox(
+            "UID / Coil",
+            ["No matching UIDs"],
+            disabled=True,
+            key=f"uid_select_empty_{_key(tunnel_name)}",
+        )
+        return None
+
+    group_options = [LATEST_GROUP_SELECTION, *group_identities]
+    groups_by_identity = {_group_identity(group): group for group in groups}
+    uid_counts = Counter(group.uid for group in groups)
+    uid_select_key = f"uid_select_{_key(tunnel_name)}"
+    if st.session_state.get(uid_select_key) not in group_options:
+        st.session_state[uid_select_key] = group_options[0]
+
+    selected_group = st.selectbox(
+        "UID / Coil",
+        group_options,
+        format_func=lambda identity: _uid_option_label(
+            identity,
+            groups_by_identity,
+            uid_counts,
+        ),
+        key=uid_select_key,
+    )
+    st.session_state[f"selected_group_{_key(tunnel_name)}"] = selected_group
+    return selected_group
+
+
 def _empty_group_message(
     tunnel_name: str,
     capture_date: date | None,
-    uid_query: str,
 ) -> str:
     date_text = f" on {capture_date.isoformat()}" if capture_date else ""
-    if uid_query.strip():
-        return (
-            f"No coil images found for {tunnel_name}{date_text} "
-            f'matching "{uid_query.strip()}".'
-        )
     return f"No coil images found for {tunnel_name}{date_text}."
 
 
@@ -251,12 +206,6 @@ def render_image_workspace(sidebar_state: SidebarState) -> None:
         )
     with date_column:
         selected_capture_date, capture_dates = _render_capture_date_input()
-    with search_column:
-        uid_query = st.text_input(
-            "UID / Coil Search",
-            placeholder="Enter coil id or UID",
-            key=UID_SEARCH_KEY,
-        ).strip()
 
     if (
         capture_dates
@@ -268,15 +217,17 @@ def render_image_workspace(sidebar_state: SidebarState) -> None:
         )
 
     if tunnel_choice == ALL_TUNNELS:
+        with search_column:
+            st.selectbox(
+                "UID / Coil",
+                ["Choose a tunnel to search UID / coil"],
+                disabled=True,
+                key="main_uid_disabled",
+            )
+
         for tunnel_name in TUNNEL_NAMES:
-            groups = _filter_groups(
-                _groups_for_tunnel(tunnel_name, selected_capture_date),
-                uid_query,
-            )
-            group = groups[0] if uid_query else _selected_or_latest_group(
-                tunnel_name,
-                groups,
-            )
+            groups = _groups_for_tunnel(tunnel_name, selected_capture_date)
+            group = _selected_or_latest_group(tunnel_name, groups)
             render_tunnel_section(
                 tunnel_name=tunnel_name,
                 group=group,
@@ -286,50 +237,12 @@ def render_image_workspace(sidebar_state: SidebarState) -> None:
                 empty_message=_empty_group_message(
                     tunnel_name,
                     selected_capture_date,
-                    uid_query,
                 ),
             )
     else:
-        groups = _filter_groups(
-            _groups_for_tunnel(tunnel_choice, selected_capture_date),
-            uid_query,
-        )
-        group_identities = [_group_identity(group) for group in groups]
-        if uid_query:
-            group_options = group_identities
-        elif group_identities:
-            group_options = [LATEST_GROUP_SELECTION, *group_identities]
-        else:
-            group_options = []
-        groups_by_identity = {_group_identity(group): group for group in groups}
-        uid_counts = Counter(group.uid for group in groups)
-        selected_group: str | None = None
-
+        groups = _groups_for_tunnel(tunnel_choice, selected_capture_date)
         with search_column:
-            if group_options:
-                uid_select_key = f"uid_select_{_key(tunnel_choice)}"
-                if st.session_state.get(uid_select_key) not in group_options:
-                    st.session_state[uid_select_key] = group_options[0]
-                selected_group = st.selectbox(
-                    "UID / Coil",
-                    group_options,
-                    format_func=lambda identity: _uid_option_label(
-                        identity,
-                        groups_by_identity,
-                        uid_counts,
-                    ),
-                    key=uid_select_key,
-                )
-                st.session_state[
-                    f"selected_group_{_key(tunnel_choice)}"
-                ] = selected_group
-            else:
-                st.selectbox(
-                    "UID / Coil",
-                    ["No matching UIDs"],
-                    disabled=True,
-                    key=f"uid_select_empty_{_key(tunnel_choice)}",
-                )
+            selected_group = _render_uid_selector(tunnel_choice, groups)
 
         group = _group_by_identity(groups, selected_group)
         render_tunnel_section(
@@ -341,7 +254,6 @@ def render_image_workspace(sidebar_state: SidebarState) -> None:
             empty_message=_empty_group_message(
                 tunnel_choice,
                 selected_capture_date,
-                uid_query,
             ),
         )
 
@@ -350,15 +262,14 @@ def render_image_workspace(sidebar_state: SidebarState) -> None:
         if selected_capture_date is not None
         else "all dates"
     )
-    search_status = f" | search: {uid_query}" if uid_query else ""
     refresh_status = (
         f"Live image scan: {datetime.now().strftime('%H:%M:%S')} | "
-        f"date: {date_status}{search_status} | "
+        f"date: {date_status} | "
         f"every {sidebar_state.image_refresh_seconds} sec"
         if sidebar_state.auto_refresh_images
         else (
             f"Live image scan: {datetime.now().strftime('%H:%M:%S')} | "
-            f"date: {date_status}{search_status} | paused"
+            f"date: {date_status} | paused"
         )
     )
     st.caption(refresh_status)
