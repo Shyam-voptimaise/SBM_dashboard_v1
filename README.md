@@ -9,6 +9,7 @@ camera images.
 - UID selector for grouped four-camera image captures
 - Defect status display using annotations and JSON metadata
 - Sidebar button for on-demand enhanced coil image viewing
+- Sidebar live-image refresh controls powered by Streamlit fragments
 - Operator validation flow with JSON metadata persistence
 - Shift and validation statistics with tunnel/date filters
 - Sidebar MQTT temperature display
@@ -64,6 +65,11 @@ Tunnel-specific paths can also be set:
 $env:SBM_TUNNEL_1_DIR="/path/to/tunnel_1"
 $env:SBM_TUNNEL_2_DIR="/path/to/tunnel_2"
 ```
+
+The sidebar controls how often the live image workspace rescans for the newest
+capture. The dashboard opens on `Latest image` by default; when that option is
+selected, the fragment refresh keeps following the newest available path without
+reloading the whole page.
 
 The app detects image folders under date-based storage such as:
 

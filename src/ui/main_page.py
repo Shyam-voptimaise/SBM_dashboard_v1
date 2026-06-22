@@ -93,6 +93,12 @@ def _selected_or_latest_group(
     return _group_by_identity(groups, selected_group)
 
 
+def _image_fragment_interval(sidebar_state: SidebarState) -> int | None:
+    if not sidebar_state.auto_refresh_images:
+        return None
+    return max(1, int(sidebar_state.image_refresh_seconds))
+
+
 def _metadata_target_image(group: ImageGroup) -> Path | None:
     for image in group.images:
         if load_image_metadata(image):
@@ -101,6 +107,15 @@ def _metadata_target_image(group: ImageGroup) -> Path | None:
 
 
 def render_main_page(sidebar_state: SidebarState) -> None:
+    @st.fragment(run_every=_image_fragment_interval(sidebar_state))
+    def render_live_image_workspace() -> None:
+        render_image_workspace(sidebar_state)
+
+    render_live_image_workspace()
+    render_stats_section()
+
+
+def render_image_workspace(sidebar_state: SidebarState) -> None:
     top_left, top_right = st.columns([1, 1])
 
     with top_left:
@@ -173,7 +188,13 @@ def render_main_page(sidebar_state: SidebarState) -> None:
             show_heading=False,
         )
 
-    render_stats_section()
+    refresh_status = (
+        f"Live image scan: {datetime.now().strftime('%H:%M:%S')} | "
+        f"every {sidebar_state.image_refresh_seconds} sec"
+        if sidebar_state.auto_refresh_images
+        else f"Live image scan: {datetime.now().strftime('%H:%M:%S')} | paused"
+    )
+    st.caption(refresh_status)
 
 
 def render_tunnel_section(

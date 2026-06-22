@@ -1307,7 +1307,7 @@ requires-dist = [
     { name = "paho-mqtt", specifier = ">=2" },
     { name = "pandas", specifier = ">=2" },
     { name = "pillow", specifier = ">=10" },
-    { name = "streamlit", specifier = ">=1.35" },
+    { name = "streamlit", specifier = ">=1.58" },
 ]
 
 [[package]]

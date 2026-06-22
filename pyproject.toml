@@ -5,7 +5,7 @@ description = "Streamlit dashboard for SBM inline defect validation."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "streamlit>=1.35",
+    "streamlit>=1.58",
     "pillow>=10",
     "paho-mqtt>=2",
     "pandas>=2",

@@ -23,6 +23,8 @@ class SidebarState:
     operator_id: str
     shift: str
     enhance_images: bool
+    auto_refresh_images: bool
+    image_refresh_seconds: int
 
 
 def render_sidebar() -> SidebarState:
@@ -46,7 +48,27 @@ def render_sidebar() -> SidebarState:
     )
 
     st.sidebar.divider()
-    st.sidebar.write(f"Auto refresh every {REFRESH_INTERVAL} sec")
+    st.sidebar.markdown("### Live Images")
+    auto_refresh_images = st.sidebar.toggle(
+        "Auto refresh",
+        value=True,
+        key="auto_refresh_images",
+    )
+    default_refresh_interval = max(1, min(int(REFRESH_INTERVAL), 120))
+    image_refresh_seconds = int(
+        st.sidebar.slider(
+            "Refresh interval",
+            min_value=1,
+            max_value=120,
+            value=default_refresh_interval,
+            step=1,
+            format="%d sec",
+            disabled=not auto_refresh_images,
+            key="image_refresh_seconds",
+        )
+    )
+    if st.sidebar.button("Refresh Images Now", use_container_width=True):
+        st.rerun()
 
     # MQTT broker can be the Pi hostname/IP when running this dashboard on a laptop.
     st.sidebar.divider()
@@ -126,4 +148,6 @@ def render_sidebar() -> SidebarState:
         operator_id=op_id,
         shift=shift,
         enhance_images=enhance_images,
+        auto_refresh_images=auto_refresh_images,
+        image_refresh_seconds=image_refresh_seconds,
     )
