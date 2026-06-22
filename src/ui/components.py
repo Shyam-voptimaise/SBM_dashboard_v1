@@ -108,14 +108,24 @@ def render_zoomable_image(
         f"""
         <div id="{viewer_id}" class="zoom-viewer">
             <div class="zoom-toolbar">
-                <button type="button" class="zoom-out" aria-label="Zoom out">-</button>
+                <button type="button" class="zoom-out" aria-label="Zoom out" title="Zoom out">-</button>
+                <div class="zoom-slider-wrap">
+                    <span class="zoom-boundary">25%</span>
+                    <input class="zoom-slider" type="range" min="25" max="2000" step="25" value="100" aria-label="Zoom percentage">
+                    <span class="zoom-boundary">2000%</span>
+                </div>
                 <span class="zoom-level">100%</span>
-                <button type="button" class="zoom-in" aria-label="Zoom in">+</button>
+                <button type="button" class="zoom-in" aria-label="Zoom in" title="Zoom in">+</button>
+                <button type="button" class="zoom-fit" aria-label="Fit image to viewer" title="Fit image to viewer">Fit</button>
+                <button type="button" class="zoom-actual" aria-label="Show actual image pixels" title="Show actual image pixels">1:1</button>
+                <button type="button" class="zoom-max" aria-label="Zoom to 2000 percent" title="Zoom to 2000 percent">Max</button>
                 <span class="zoom-spacer"></span>
-                <button type="button" class="zoom-maximize" aria-label="Maximize full resolution view">Maximize</button>
+                <button type="button" class="zoom-maximize" aria-label="Maximize full resolution view" title="Maximize full resolution view">Full</button>
             </div>
             <div class="zoom-stage" tabindex="0">
-                <img src="{data_url}" alt="{safe_caption}" draggable="false">
+                <div class="zoom-canvas">
+                    <img src="{data_url}" alt="{safe_caption}" draggable="false">
+                </div>
             </div>
             <div class="zoom-caption">{safe_caption}</div>
         </div>
@@ -136,6 +146,7 @@ def render_zoomable_image(
                 padding: 0.5rem;
                 border-bottom: 1px solid #d1d5db;
                 background: #ffffff;
+                flex-wrap: wrap;
             }}
             #{viewer_id} button {{
                 width: 2rem;
@@ -152,17 +163,44 @@ def render_zoomable_image(
             #{viewer_id} button:hover {{
                 background: #f3f4f6;
             }}
+            #{viewer_id} button:disabled {{
+                color: #9ca3af;
+                cursor: not-allowed;
+                background: #f9fafb;
+            }}
+            #{viewer_id} .zoom-slider-wrap {{
+                display: flex;
+                align-items: center;
+                gap: 0.4rem;
+                flex: 1 1 18rem;
+                min-width: 14rem;
+            }}
+            #{viewer_id} .zoom-slider {{
+                width: 100%;
+                min-width: 8rem;
+                accent-color: #2563eb;
+                cursor: pointer;
+            }}
+            #{viewer_id} .zoom-boundary {{
+                color: #6b7280;
+                font-size: 0.78rem;
+                font-weight: 700;
+                white-space: nowrap;
+            }}
             #{viewer_id} .zoom-spacer {{
                 flex: 1;
             }}
+            #{viewer_id} .zoom-fit,
+            #{viewer_id} .zoom-actual,
+            #{viewer_id} .zoom-max,
             #{viewer_id} .zoom-maximize {{
                 width: auto;
-                min-width: 5.5rem;
+                min-width: 2.75rem;
                 padding: 0 0.65rem;
                 font-size: 0.85rem;
             }}
             #{viewer_id} .zoom-level {{
-                min-width: 3.5rem;
+                min-width: 4.25rem;
                 color: #374151;
                 font-size: 0.9rem;
                 font-weight: 700;
@@ -171,21 +209,34 @@ def render_zoomable_image(
             #{viewer_id} .zoom-stage {{
                 height: 680px;
                 overflow: auto;
-                display: flex;
-                align-items: flex-start;
-                justify-content: center;
-                padding: 1rem;
+                position: relative;
                 background: #111827;
                 outline: none;
+                cursor: grab;
+                overscroll-behavior: contain;
+                touch-action: none;
+            }}
+            #{viewer_id} .zoom-stage.is-panning {{
+                cursor: grabbing;
+            }}
+            #{viewer_id} .zoom-stage:focus {{
+                box-shadow: inset 0 0 0 2px #60a5fa;
+            }}
+            #{viewer_id} .zoom-canvas {{
+                position: relative;
+                min-width: 100%;
+                min-height: 100%;
             }}
             #{viewer_id} img {{
                 display: block;
-                width: 100%;
+                position: absolute;
+                top: 0;
+                left: 0;
                 max-width: none;
-                height: auto;
-                margin: 0 auto;
-                transition: width 120ms ease;
+                transform-origin: top left;
+                will-change: transform;
                 user-select: none;
+                pointer-events: none;
             }}
             #{viewer_id} .zoom-caption {{
                 padding: 0.5rem;
@@ -212,31 +263,120 @@ def render_zoomable_image(
                 if (!root) return;
 
                 const stage = root.querySelector(".zoom-stage");
+                const canvas = root.querySelector(".zoom-canvas");
                 const image = root.querySelector("img");
                 const level = root.querySelector(".zoom-level");
+                const slider = root.querySelector(".zoom-slider");
                 const zoomIn = root.querySelector(".zoom-in");
                 const zoomOut = root.querySelector(".zoom-out");
+                const zoomFit = root.querySelector(".zoom-fit");
+                const zoomActual = root.querySelector(".zoom-actual");
+                const zoomMax = root.querySelector(".zoom-max");
                 const maximize = root.querySelector(".zoom-maximize");
-                let scale = 1;
-                const maxScale = 20;
+                const minZoom = 0.25;
+                const maxZoom = 20;
+                let zoom = 1;
+                let imageWidth = 1;
+                let imageHeight = 1;
+                let imageOffsetX = 0;
+                let imageOffsetY = 0;
+                let isPanning = false;
+                let panStartX = 0;
+                let panStartY = 0;
+                let panScrollLeft = 0;
+                let panScrollTop = 0;
 
-                function clamp(value) {{
-                    return Math.min(maxScale, Math.max(0.25, value));
+                function clampZoom(value) {{
+                    return Math.min(maxZoom, Math.max(minZoom, value));
                 }}
 
-                function render() {{
-                    image.style.width = `${{scale * 100}}%`;
-                    level.textContent = `${{Math.round(scale * 100)}}%`;
+                function zoomPercent(value) {{
+                    return Math.round(value * 100);
                 }}
 
-                function update(nextScale) {{
-                    scale = clamp(nextScale);
-                    render();
+                function layoutImage() {{
+                    const scaledWidth = imageWidth * zoom;
+                    const scaledHeight = imageHeight * zoom;
+                    const canvasWidth = Math.max(stage.clientWidth, scaledWidth);
+                    const canvasHeight = Math.max(stage.clientHeight, scaledHeight);
+
+                    imageOffsetX = Math.max(0, (canvasWidth - scaledWidth) / 2);
+                    imageOffsetY = Math.max(0, (canvasHeight - scaledHeight) / 2);
+
+                    canvas.style.width = `${{canvasWidth}}px`;
+                    canvas.style.height = `${{canvasHeight}}px`;
+                    image.style.width = `${{imageWidth}}px`;
+                    image.style.height = `${{imageHeight}}px`;
+                    image.style.left = `${{imageOffsetX}}px`;
+                    image.style.top = `${{imageOffsetY}}px`;
+                    image.style.transform = `scale(${{zoom}})`;
+                }}
+
+                function syncControls() {{
+                    const percent = zoomPercent(zoom);
+                    level.textContent = `${{percent}}%`;
+                    slider.value = String(percent);
+                    zoomOut.disabled = zoom <= minZoom + 0.001;
+                    zoomIn.disabled = zoom >= maxZoom - 0.001;
+                    zoomMax.disabled = zoom >= maxZoom - 0.001;
+                }}
+
+                function imagePointFromStage(anchorX, anchorY) {{
+                    return {{
+                        x: (stage.scrollLeft + anchorX - imageOffsetX) / zoom,
+                        y: (stage.scrollTop + anchorY - imageOffsetY) / zoom,
+                    }};
+                }}
+
+                function scrollToImagePoint(point, anchorX, anchorY) {{
+                    stage.scrollLeft = point.x * zoom + imageOffsetX - anchorX;
+                    stage.scrollTop = point.y * zoom + imageOffsetY - anchorY;
+                }}
+
+                function viewportAnchor(anchor) {{
+                    if (anchor) return anchor;
+                    return {{
+                        x: stage.clientWidth / 2,
+                        y: stage.clientHeight / 2,
+                    }};
+                }}
+
+                function updateZoom(nextZoom, anchor) {{
+                    const target = clampZoom(nextZoom);
+                    const pointAnchor = viewportAnchor(anchor);
+                    const imagePoint = imagePointFromStage(pointAnchor.x, pointAnchor.y);
+
+                    zoom = target;
+                    layoutImage();
+                    syncControls();
+                    scrollToImagePoint(imagePoint, pointAnchor.x, pointAnchor.y);
+                }}
+
+                function zoomStep(direction) {{
+                    const percent = zoomPercent(zoom);
+                    const step =
+                        percent < 100 ? 25 :
+                        percent < 400 ? 50 :
+                        percent < 1000 ? 100 :
+                        250;
+                    updateZoom((percent + direction * step) / 100);
+                }}
+
+                function fitZoom() {{
+                    return clampZoom(Math.min(
+                        stage.clientWidth / imageWidth,
+                        stage.clientHeight / imageHeight
+                    ));
+                }}
+
+                function centerImage() {{
+                    stage.scrollLeft = Math.max(0, (canvas.scrollWidth - stage.clientWidth) / 2);
+                    stage.scrollTop = Math.max(0, (canvas.scrollHeight - stage.clientHeight) / 2);
                 }}
 
                 function renderMaximizeState() {{
                     const maximized = document.fullscreenElement === root;
-                    maximize.textContent = maximized ? "Exit" : "Maximize";
+                    maximize.textContent = maximized ? "Exit" : "Full";
                     maximize.setAttribute(
                         "aria-label",
                         maximized
@@ -245,8 +385,15 @@ def render_zoomable_image(
                     );
                 }}
 
-                zoomIn.addEventListener("click", () => update(scale + (scale >= 6 ? 1 : 0.25)));
-                zoomOut.addEventListener("click", () => update(scale - (scale > 6 ? 1 : 0.25)));
+                zoomIn.addEventListener("click", () => zoomStep(1));
+                zoomOut.addEventListener("click", () => zoomStep(-1));
+                zoomFit.addEventListener("click", () => {{
+                    updateZoom(fitZoom());
+                    centerImage();
+                }});
+                zoomActual.addEventListener("click", () => updateZoom(1));
+                zoomMax.addEventListener("click", () => updateZoom(maxZoom));
+                slider.addEventListener("input", () => updateZoom(Number(slider.value) / 100));
                 maximize.addEventListener("click", async () => {{
                     try {{
                         if (document.fullscreenElement === root) {{
@@ -259,20 +406,95 @@ def render_zoomable_image(
                         window.setTimeout(renderMaximizeState, 1200);
                     }}
                 }});
-                document.addEventListener("fullscreenchange", renderMaximizeState);
+                document.addEventListener("fullscreenchange", () => {{
+                    renderMaximizeState();
+                    window.setTimeout(() => {{
+                        layoutImage();
+                        centerImage();
+                    }}, 60);
+                }});
                 stage.addEventListener("wheel", (event) => {{
                     event.preventDefault();
-                    const stepSize = scale >= 6 ? 0.5 : 0.15;
-                    const step = event.deltaY < 0 ? stepSize : -stepSize;
-                    update(scale + step);
+                    const bounds = stage.getBoundingClientRect();
+                    const anchor = {{
+                        x: event.clientX - bounds.left,
+                        y: event.clientY - bounds.top,
+                    }};
+                    const wheelScale = Math.exp(-event.deltaY * 0.0015);
+                    updateZoom(zoom * wheelScale, anchor);
                 }}, {{ passive: false }});
 
-                render();
+                stage.addEventListener("pointerdown", (event) => {{
+                    if (event.button !== 0) return;
+                    isPanning = true;
+                    panStartX = event.clientX;
+                    panStartY = event.clientY;
+                    panScrollLeft = stage.scrollLeft;
+                    panScrollTop = stage.scrollTop;
+                    stage.classList.add("is-panning");
+                    stage.setPointerCapture(event.pointerId);
+                }});
+                stage.addEventListener("pointermove", (event) => {{
+                    if (!isPanning) return;
+                    stage.scrollLeft = panScrollLeft - (event.clientX - panStartX);
+                    stage.scrollTop = panScrollTop - (event.clientY - panStartY);
+                }});
+                stage.addEventListener("pointerup", (event) => {{
+                    isPanning = false;
+                    stage.classList.remove("is-panning");
+                    if (stage.hasPointerCapture(event.pointerId)) {{
+                        stage.releasePointerCapture(event.pointerId);
+                    }}
+                }});
+                stage.addEventListener("pointercancel", () => {{
+                    isPanning = false;
+                    stage.classList.remove("is-panning");
+                }});
+                stage.addEventListener("keydown", (event) => {{
+                    if (event.key === "+" || event.key === "=") {{
+                        event.preventDefault();
+                        zoomStep(1);
+                    }} else if (event.key === "-") {{
+                        event.preventDefault();
+                        zoomStep(-1);
+                    }} else if (event.key === "0") {{
+                        event.preventDefault();
+                        updateZoom(1);
+                    }} else if (event.key === "Home") {{
+                        event.preventDefault();
+                        updateZoom(minZoom);
+                    }} else if (event.key === "End") {{
+                        event.preventDefault();
+                        updateZoom(maxZoom);
+                    }}
+                }});
+                window.addEventListener("resize", () => {{
+                    layoutImage();
+                    syncControls();
+                }});
+
+                image.addEventListener("load", () => {{
+                    imageWidth = image.naturalWidth || 1;
+                    imageHeight = image.naturalHeight || 1;
+                    zoom = 1;
+                    layoutImage();
+                    syncControls();
+                    centerImage();
+                }}, {{ once: true }});
+                if (image.complete) {{
+                    imageWidth = image.naturalWidth || 1;
+                    imageHeight = image.naturalHeight || 1;
+                    layoutImage();
+                    syncControls();
+                    centerImage();
+                }} else {{
+                    syncControls();
+                }}
                 renderMaximizeState();
             }})();
         </script>
         """,
-        height=780,
+        height=820,
         scrolling=False,
     )
 
