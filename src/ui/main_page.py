@@ -85,8 +85,12 @@ def _uid_option_label(
     return _uid_label(groups_by_identity[identity], uid_counts)
 
 
-def _latest_group(groups: list[ImageGroup]) -> ImageGroup | None:
-    return groups[0] if groups else None
+def _selected_or_latest_group(
+    tunnel_name: str,
+    groups: list[ImageGroup],
+) -> ImageGroup | None:
+    selected_group = st.session_state.get(f"selected_group_{_key(tunnel_name)}")
+    return _group_by_identity(groups, selected_group)
 
 
 def _metadata_target_image(group: ImageGroup) -> Path | None:
@@ -118,7 +122,7 @@ def render_main_page(sidebar_state: SidebarState) -> None:
 
         for tunnel_name in TUNNEL_NAMES:
             groups = _groups_for_tunnel(tunnel_name)
-            group = _latest_group(groups)
+            group = _selected_or_latest_group(tunnel_name, groups)
             render_tunnel_section(
                 tunnel_name=tunnel_name,
                 group=group,
@@ -139,10 +143,6 @@ def render_main_page(sidebar_state: SidebarState) -> None:
 
         with top_right:
             if group_options:
-                uid_select_key = f"uid_select_{_key(tunnel_choice)}"
-                if st.session_state.get(uid_select_key) not in group_options:
-                    st.session_state[uid_select_key] = LATEST_GROUP_SELECTION
-
                 selected_group = st.selectbox(
                     "UID",
                     group_options,
@@ -151,7 +151,7 @@ def render_main_page(sidebar_state: SidebarState) -> None:
                         groups_by_identity,
                         uid_counts,
                     ),
-                    key=uid_select_key,
+                    key=f"uid_select_{_key(tunnel_choice)}",
                 )
                 st.session_state[
                     f"selected_group_{_key(tunnel_choice)}"
