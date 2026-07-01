@@ -640,29 +640,6 @@ def render_image_grid(
     )
     st.markdown(title)
 
-    previous_column, view_column, coil_column, next_column = st.columns([1, 1, 2, 1])
-    navigation_disabled = len(display_images) <= 1
-    with previous_column:
-        if st.button(
-            "< Previous",
-            key=f"{key_prefix}_zoom_previous",
-            disabled=navigation_disabled,
-            use_container_width=True,
-        ):
-            selected_index = (selected_index - 1) % len(display_images)
-            zoom_path = display_image_paths[selected_index]
-            st.session_state[zoom_key] = zoom_path
-    with next_column:
-        if st.button(
-            "Next >",
-            key=f"{key_prefix}_zoom_next",
-            disabled=navigation_disabled,
-            use_container_width=True,
-        ):
-            selected_index = (selected_index + 1) % len(display_images)
-            zoom_path = display_image_paths[selected_index]
-            st.session_state[zoom_key] = zoom_path
-
     selected_loaded_image = next(
         (
             loaded_image
@@ -686,12 +663,6 @@ def render_image_grid(
         zoom_path = display_image_paths[selected_index]
         st.session_state[zoom_key] = zoom_path
         current_item_index = 0
-
-    with view_column:
-        st.markdown(f"**View:** `{selected_index + 1} / {len(display_images)}`")
-    with coil_column:
-        if coil_number:
-            st.markdown(f"**Coil:** `{coil_number}`")
 
     if selected_loaded_image is not None and available_zoom_items:
         render_zoomable_image(
