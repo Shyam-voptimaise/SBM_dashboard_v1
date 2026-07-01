@@ -365,6 +365,7 @@ def render_tunnel_section(
                 group.images,
                 f"{section_key}_{group_key}",
                 enhance_images=sidebar_state.enhance_images,
+                coil_number=group.coil,
             )
 
     with status_column:

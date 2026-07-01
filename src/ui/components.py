@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import html
 import io
+import json
 import re
 from pathlib import Path
 
@@ -100,14 +101,39 @@ def render_zoomable_image(
     image: Image.Image | bytes,
     caption: str,
     key_prefix: str,
+    *,
+    image_items: tuple[tuple[Image.Image | bytes, str, int], ...] | None = None,
+    current_item_index: int = 0,
+    total_view_count: int | None = None,
+    coil_number: str | None = None,
 ) -> None:
     viewer_id = f"zoom_viewer_{_dom_id(key_prefix)}"
-    data_url = html.escape(_image_data_url(image), quote=True)
-    safe_caption = html.escape(caption)
+    resolved_items = image_items or ((image, caption, current_item_index + 1),)
+    current_item_index = min(max(current_item_index, 0), len(resolved_items) - 1)
+    viewer_images = [
+        {
+            "src": _image_data_url(item_image),
+            "caption": item_caption,
+            "viewNumber": item_view_number,
+        }
+        for item_image, item_caption, item_view_number in resolved_items
+    ]
+    initial_item = viewer_images[current_item_index]
+    resolved_view_count = total_view_count or max(
+        item["viewNumber"] for item in viewer_images
+    )
+    images_json = json.dumps(viewer_images).replace("</", "<\\/")
+    view_count_json = json.dumps(resolved_view_count)
+    coil_json = json.dumps(str(coil_number or "N/A")).replace("</", "<\\/")
+    data_url = html.escape(initial_item["src"], quote=True)
+    safe_caption = html.escape(initial_item["caption"])
     components.html(
         f"""
         <div id="{viewer_id}" class="zoom-viewer">
             <div class="zoom-toolbar">
+                <button type="button" class="zoom-prev-view" aria-label="Previous view" title="Previous view">&lt;</button>
+                <span class="zoom-view-meta"></span>
+                <button type="button" class="zoom-next-view" aria-label="Next view" title="Next view">&gt;</button>
                 <button type="button" class="zoom-out" aria-label="Zoom out" title="Zoom out">-</button>
                 <div class="zoom-slider-wrap">
                     <span class="zoom-boundary">25%</span>
@@ -190,6 +216,13 @@ def render_zoomable_image(
             #{viewer_id} .zoom-spacer {{
                 flex: 1;
             }}
+            #{viewer_id} .zoom-view-meta {{
+                min-width: 10rem;
+                color: #111827;
+                font-size: 0.9rem;
+                font-weight: 700;
+                white-space: nowrap;
+            }}
             #{viewer_id} .zoom-fit,
             #{viewer_id} .zoom-actual,
             #{viewer_id} .zoom-max,
@@ -262,9 +295,16 @@ def render_zoomable_image(
                 const root = document.getElementById("{viewer_id}");
                 if (!root) return;
 
+                const images = {images_json};
+                const viewCount = {view_count_json};
+                const coilNumber = {coil_json};
                 const stage = root.querySelector(".zoom-stage");
                 const canvas = root.querySelector(".zoom-canvas");
                 const image = root.querySelector("img");
+                const caption = root.querySelector(".zoom-caption");
+                const viewMeta = root.querySelector(".zoom-view-meta");
+                const prevView = root.querySelector(".zoom-prev-view");
+                const nextView = root.querySelector(".zoom-next-view");
                 const level = root.querySelector(".zoom-level");
                 const slider = root.querySelector(".zoom-slider");
                 const zoomIn = root.querySelector(".zoom-in");
@@ -285,6 +325,7 @@ def render_zoomable_image(
                 let panStartY = 0;
                 let panScrollLeft = 0;
                 let panScrollTop = 0;
+                let currentImageIndex = {current_item_index};
 
                 function clampZoom(value) {{
                     return Math.min(maxZoom, Math.max(minZoom, value));
@@ -319,6 +360,50 @@ def render_zoomable_image(
                     zoomOut.disabled = zoom <= minZoom + 0.001;
                     zoomIn.disabled = zoom >= maxZoom - 0.001;
                     zoomMax.disabled = zoom >= maxZoom - 0.001;
+                }}
+
+                function currentImage() {{
+                    return images[currentImageIndex] || images[0];
+                }}
+
+                function syncViewControls() {{
+                    const item = currentImage();
+                    if (!item) return;
+                    viewMeta.textContent = `View ${{item.viewNumber}} of ${{viewCount}} | Coil: ${{coilNumber}}`;
+                    prevView.disabled = images.length <= 1;
+                    nextView.disabled = images.length <= 1;
+                }}
+
+                function handleImageReady() {{
+                    imageWidth = image.naturalWidth || 1;
+                    imageHeight = image.naturalHeight || 1;
+                    zoom = 1;
+                    layoutImage();
+                    syncControls();
+                    centerImage();
+                }}
+
+                function loadCurrentImage() {{
+                    const item = currentImage();
+                    if (!item) return;
+
+                    imageWidth = 1;
+                    imageHeight = 1;
+                    image.alt = item.caption;
+                    caption.textContent = item.caption;
+                    syncViewControls();
+
+                    if (image.src !== item.src) {{
+                        image.src = item.src;
+                    }} else if (image.complete) {{
+                        handleImageReady();
+                    }}
+                }}
+
+                function moveView(direction) {{
+                    if (images.length <= 1) return;
+                    currentImageIndex = (currentImageIndex + direction + images.length) % images.length;
+                    loadCurrentImage();
                 }}
 
                 function imagePointFromStage(anchorX, anchorY) {{
@@ -385,6 +470,8 @@ def render_zoomable_image(
                     );
                 }}
 
+                prevView.addEventListener("click", () => moveView(-1));
+                nextView.addEventListener("click", () => moveView(1));
                 zoomIn.addEventListener("click", () => zoomStep(1));
                 zoomOut.addEventListener("click", () => zoomStep(-1));
                 zoomFit.addEventListener("click", () => {{
@@ -473,23 +560,9 @@ def render_zoomable_image(
                     syncControls();
                 }});
 
-                image.addEventListener("load", () => {{
-                    imageWidth = image.naturalWidth || 1;
-                    imageHeight = image.naturalHeight || 1;
-                    zoom = 1;
-                    layoutImage();
-                    syncControls();
-                    centerImage();
-                }}, {{ once: true }});
-                if (image.complete) {{
-                    imageWidth = image.naturalWidth || 1;
-                    imageHeight = image.naturalHeight || 1;
-                    layoutImage();
-                    syncControls();
-                    centerImage();
-                }} else {{
-                    syncControls();
-                }}
+                image.addEventListener("load", handleImageReady);
+                loadCurrentImage();
+                syncControls();
                 renderMaximizeState();
             }})();
         </script>
@@ -503,6 +576,7 @@ def render_image_grid(
     images: tuple[Path, ...],
     key_prefix: str,
     enhance_images: bool = False,
+    coil_number: str | None = None,
 ) -> None:
     if not images:
         st.warning("No images found for this UID.")
@@ -518,6 +592,7 @@ def render_image_grid(
         st.session_state[zoom_key] = display_image_paths[0]
 
     image_columns = st.columns(4)
+    loaded_images: list[tuple[Path, Image.Image | bytes | None]] = []
     for index in range(4):
         with image_columns[index]:
             if index >= len(display_images):
@@ -534,6 +609,7 @@ def render_image_grid(
                 st.error(str(exc))
                 return
 
+            loaded_images.append((image_path, image))
             if image is None:
                 action = "enhance" if enhance_images else "load"
                 st.warning(f"Could not {action} {image_path.name}")
@@ -545,22 +621,85 @@ def render_image_grid(
                 )
 
     zoom_path = st.session_state.get(zoom_key)
-    if zoom_path:
-        try:
-            image = open_display_image(Path(zoom_path), enhance_images)
-        except EnhancementDependencyError as exc:
-            st.error(str(exc))
-            return
+    if zoom_path and zoom_path in display_image_paths:
+        selected_index = display_image_paths.index(zoom_path)
+    else:
+        selected_index = 0
+        zoom_path = display_image_paths[0]
+        st.session_state[zoom_key] = zoom_path
+    available_zoom_items = tuple(
+        (loaded_image, _caption(index, loaded_path, enhance_images), index + 1)
+        for index, (loaded_path, loaded_image) in enumerate(loaded_images)
+        if loaded_image is not None
+    )
 
-        if image is not None:
-            title = (
-                "### Full Resolution Enhanced View"
-                if enhance_images
-                else "### Full Resolution View"
-            )
-            st.markdown(title)
-            render_zoomable_image(
-                image,
-                Path(zoom_path).name,
-                f"{key_prefix}_{Path(zoom_path).name}_{enhance_images}",
-            )
+    title = (
+        "### Full Resolution Enhanced View"
+        if enhance_images
+        else "### Full Resolution View"
+    )
+    st.markdown(title)
+
+    previous_column, view_column, coil_column, next_column = st.columns([1, 1, 2, 1])
+    navigation_disabled = len(display_images) <= 1
+    with previous_column:
+        if st.button(
+            "< Previous",
+            key=f"{key_prefix}_zoom_previous",
+            disabled=navigation_disabled,
+            use_container_width=True,
+        ):
+            selected_index = (selected_index - 1) % len(display_images)
+            zoom_path = display_image_paths[selected_index]
+            st.session_state[zoom_key] = zoom_path
+    with next_column:
+        if st.button(
+            "Next >",
+            key=f"{key_prefix}_zoom_next",
+            disabled=navigation_disabled,
+            use_container_width=True,
+        ):
+            selected_index = (selected_index + 1) % len(display_images)
+            zoom_path = display_image_paths[selected_index]
+            st.session_state[zoom_key] = zoom_path
+
+    selected_loaded_image = next(
+        (
+            loaded_image
+            for loaded_path, loaded_image in loaded_images
+            if str(loaded_path) == zoom_path
+        ),
+        None,
+    )
+    current_item_index = next(
+        (
+            item_index
+            for item_index, (_, _, view_number) in enumerate(available_zoom_items)
+            if view_number == selected_index + 1
+        ),
+        0,
+    )
+
+    if selected_loaded_image is None and available_zoom_items:
+        selected_loaded_image, _, selected_view_number = available_zoom_items[0]
+        selected_index = selected_view_number - 1
+        zoom_path = display_image_paths[selected_index]
+        st.session_state[zoom_key] = zoom_path
+        current_item_index = 0
+
+    with view_column:
+        st.markdown(f"**View:** `{selected_index + 1} / {len(display_images)}`")
+    with coil_column:
+        if coil_number:
+            st.markdown(f"**Coil:** `{coil_number}`")
+
+    if selected_loaded_image is not None and available_zoom_items:
+        render_zoomable_image(
+            selected_loaded_image,
+            Path(zoom_path).name,
+            f"{key_prefix}_{Path(zoom_path).name}_{enhance_images}",
+            image_items=available_zoom_items,
+            current_item_index=current_item_index,
+            total_view_count=len(display_images),
+            coil_number=coil_number,
+        )
