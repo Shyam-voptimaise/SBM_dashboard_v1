@@ -15,6 +15,7 @@ images:
 temperatures:
   base_dir: /home/voptimaise/Projects/SBM/received_temperatures
   alert_threshold_c: 65
+  refresh_seconds: 5
 
 tunnels:
   Tunnel 1:

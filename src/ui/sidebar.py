@@ -10,6 +10,7 @@ from runtime_config import (
     SHIFTS,
     TEMPERATURE_ALERT_THRESHOLD_C,
     TEMPERATURE_BASE_DIR,
+    TEMPERATURE_REFRESH_SECONDS,
 )
 from temperature_store import (
     CameraTemperature,
@@ -52,7 +53,7 @@ def _format_timestamp(value: object) -> str | None:
     return str(value)
 
 
-def _render_temperature_panel() -> None:
+def _render_temperature_contents() -> None:
     snapshot = latest_temperature_snapshot(TEMPERATURE_BASE_DIR)
     readings_by_camera = _temperature_by_camera(snapshot.readings)
     hot_readings = over_temperature_readings(
@@ -65,7 +66,7 @@ def _render_temperature_panel() -> None:
     cam_1_value = cam_1.value_c if cam_1 else None
     cam_2_value = cam_2.value_c if cam_2 else None
 
-    st.sidebar.markdown(
+    st.markdown(
         f"""
         <div style="margin:0.35rem 0 0.55rem 0;">
             <div style="font-size:0.82rem;font-weight:700;color:#4b5563;margin-bottom:0.2rem;">
@@ -81,7 +82,7 @@ def _render_temperature_panel() -> None:
     )
 
     for reading in hot_readings:
-        st.sidebar.error(
+        st.error(
             f"{reading.label} temperature high: "
             f"{reading.value_c:.1f} C"
         )
@@ -100,7 +101,17 @@ def _render_temperature_panel() -> None:
     )
     updated_text = _format_timestamp(updated_at)
     if updated_text:
-        st.sidebar.caption(f"Temp updated: {updated_text}")
+        st.caption(f"Temp updated: {updated_text}")
+
+
+def _render_temperature_panel() -> None:
+    @st.fragment(run_every=max(1, int(TEMPERATURE_REFRESH_SECONDS)))
+    def render_received_temperature() -> None:
+        with st.container():
+            _render_temperature_contents()
+
+    with st.sidebar:
+        render_received_temperature()
 
 
 def render_sidebar() -> SidebarState:

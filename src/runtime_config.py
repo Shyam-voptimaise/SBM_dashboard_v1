@@ -305,6 +305,10 @@ TEMPERATURE_ALERT_THRESHOLD_C = _env_float(
     "SBM_TEMPERATURE_ALERT_THRESHOLD_C",
     _as_float(_get(("temperatures", "alert_threshold_c"), None), 65.0),
 )
+TEMPERATURE_REFRESH_SECONDS = _env_int(
+    "SBM_TEMPERATURE_REFRESH_SECONDS",
+    _as_int(_get(("temperatures", "refresh_seconds"), None), 5),
+)
 
 _DEFAULT_TUNNELS: dict[str, dict[str, Any]] = {
     "Tunnel 1": {
