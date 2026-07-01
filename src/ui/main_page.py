@@ -32,6 +32,9 @@ from ui.sidebar import SidebarState
 
 LATEST_GROUP_SELECTION = "__latest_image__"
 CAPTURE_DATE_KEY = "main_capture_date"
+CAPTURE_DATE_DEFAULT_KEY = f"{CAPTURE_DATE_KEY}_default"
+STATS_TO_DATE_KEY = "stats_to_date"
+STATS_TO_DATE_DEFAULT_KEY = f"{STATS_TO_DATE_KEY}_default"
 
 
 def _key(value: str) -> str:
@@ -59,23 +62,52 @@ def _groups_for_tunnel(
     return image_groups_for_tunnel(tunnel_name, TUNNELS[tunnel_name], capture_date)
 
 
+def _sync_date_input_default(
+    key: str,
+    default_key: str,
+    default_date: date,
+    min_date: date,
+    max_date: date,
+) -> None:
+    current_date = _coerce_date(st.session_state.get(key))
+    previous_default = _coerce_date(st.session_state.get(default_key))
+    bounded_default = min(max(default_date, min_date), max_date)
+    should_use_default = (
+        current_date is None
+        or current_date < min_date
+        or current_date > max_date
+        or (
+            previous_default is not None
+            and current_date == previous_default
+            and previous_default != bounded_default
+        )
+    )
+
+    if should_use_default:
+        st.session_state[key] = bounded_default
+    st.session_state[default_key] = bounded_default
+
+
 def _render_capture_date_input() -> tuple[date | None, tuple[date, ...]]:
+    today = date.today()
     capture_dates = available_capture_dates(tuple(TUNNELS.values()))
     if not capture_dates:
         st.date_input(
             "Image Date",
-            value=date.today(),
+            value=today,
             disabled=True,
-            key=f"{CAPTURE_DATE_KEY}_disabled",
         )
         return None, capture_dates
 
-    latest_date = capture_dates[0]
-    min_date = min(capture_dates)
-    max_date = max(capture_dates)
-    current_date = _coerce_date(st.session_state.get(CAPTURE_DATE_KEY))
-    if current_date is None or current_date < min_date or current_date > max_date:
-        st.session_state[CAPTURE_DATE_KEY] = latest_date
+    min_date = min(min(capture_dates), today)
+    max_date = max(max(capture_dates), today)
+    _sync_date_input_default(
+        CAPTURE_DATE_KEY,
+        CAPTURE_DATE_DEFAULT_KEY,
+        today,
+        min_date,
+        max_date,
+    )
 
     selected_date = st.date_input(
         "Image Date",
@@ -83,7 +115,7 @@ def _render_capture_date_input() -> tuple[date | None, tuple[date, ...]]:
         max_value=max_date,
         key=CAPTURE_DATE_KEY,
     )
-    return _coerce_date(selected_date) or latest_date, capture_dates
+    return _coerce_date(selected_date) or today, capture_dates
 
 
 def _group_identity(group: ImageGroup) -> str:
@@ -434,8 +466,15 @@ def render_stats_section() -> None:
     records = collect_metadata_records(TUNNELS)
     record_dates = [record["_date"] for record in records if record.get("_date")]
     today = date.today()
-    min_date = min(record_dates) if record_dates else today
-    max_date = max(record_dates) if record_dates else today
+    min_date = min((*record_dates, today))
+    max_date = max((*record_dates, today))
+    _sync_date_input_default(
+        STATS_TO_DATE_KEY,
+        STATS_TO_DATE_DEFAULT_KEY,
+        today,
+        min_date,
+        max_date,
+    )
 
     filter_col, from_col, to_col = st.columns([1, 1, 1])
     with filter_col:
@@ -446,9 +485,20 @@ def render_stats_section() -> None:
             key="stats_tunnel_filter",
         )
     with from_col:
-        from_date = st.date_input("From date", value=min_date, key="stats_from_date")
+        from_date = st.date_input(
+            "From date",
+            value=min_date,
+            min_value=min_date,
+            max_value=max_date,
+            key="stats_from_date",
+        )
     with to_col:
-        to_date = st.date_input("To date", value=max_date, key="stats_to_date")
+        to_date = st.date_input(
+            "To date",
+            min_value=min_date,
+            max_value=max_date,
+            key=STATS_TO_DATE_KEY,
+        )
 
     if from_date > to_date:
         st.warning("From date must be earlier than or equal to To date.")
