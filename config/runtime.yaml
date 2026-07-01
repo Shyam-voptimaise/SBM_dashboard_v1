@@ -12,6 +12,10 @@ images:
     - .png
     - .bmp
 
+temperatures:
+  base_dir: /home/voptimaise/Projects/SBM/received_temperatures
+  alert_threshold_c: 65
+
 tunnels:
   Tunnel 1:
     env: SBM_TUNNEL_1_DIR
@@ -49,12 +53,3 @@ validation:
     - Not Validated
     - Defect Confirmed
     - False Alarm
-
-mqtt:
-  brokers:
-    - voptimaipi5.local
-  port: 8883
-  topic: hotmetal/env/reading
-  tls_enabled: true
-  ca_file: /etc/mosquitto/certs/ca.crt
-  connect_timeout_seconds: 2

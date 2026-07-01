@@ -13,6 +13,8 @@ from runtime_config import (
     TUNNEL_FILTER_OPTIONS,
     TUNNEL_NAMES,
     TUNNELS,
+    TEMPERATURE_ALERT_THRESHOLD_C,
+    TEMPERATURE_BASE_DIR,
     UNVALIDATED_DECISION,
     VALIDATION_DECISIONS,
 )
@@ -23,6 +25,7 @@ from stats import (
     records_to_dataframe,
     summary_counts,
 )
+from temperature_store import latest_temperature_snapshot, over_temperature_readings
 from ui.components import (
     open_image,
     render_image_grid,
@@ -210,6 +213,30 @@ def _image_fragment_interval(sidebar_state: SidebarState) -> int | None:
     return max(1, int(sidebar_state.image_refresh_seconds))
 
 
+def _temperature_fragment_interval(sidebar_state: SidebarState) -> int:
+    return max(1, int(sidebar_state.image_refresh_seconds))
+
+
+def render_temperature_alerts() -> None:
+    snapshot = latest_temperature_snapshot(TEMPERATURE_BASE_DIR)
+    hot_readings = over_temperature_readings(
+        snapshot.readings,
+        TEMPERATURE_ALERT_THRESHOLD_C,
+    )
+    if not hot_readings:
+        return
+
+    alert_text = ", ".join(
+        f"{reading.label}: {reading.value_c:.1f} C"
+        for reading in hot_readings
+        if reading.value_c is not None
+    )
+    st.error(
+        "Camera temperature alert: "
+        f"{alert_text} above {TEMPERATURE_ALERT_THRESHOLD_C:.1f} C."
+    )
+
+
 def _metadata_target_image(group: ImageGroup) -> Path | None:
     for image in group.images:
         if load_image_metadata(image):
@@ -218,10 +245,15 @@ def _metadata_target_image(group: ImageGroup) -> Path | None:
 
 
 def render_main_page(sidebar_state: SidebarState) -> None:
+    @st.fragment(run_every=_temperature_fragment_interval(sidebar_state))
+    def render_live_temperature_alerts() -> None:
+        render_temperature_alerts()
+
     @st.fragment(run_every=_image_fragment_interval(sidebar_state))
     def render_live_image_workspace() -> None:
         render_image_workspace(sidebar_state)
 
+    render_live_temperature_alerts()
     render_live_image_workspace()
     render_stats_section()
 

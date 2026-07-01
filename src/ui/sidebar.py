@@ -1,19 +1,20 @@
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 
 import streamlit as st
 
-from mqtt import extract_mqtt_command_values, start_mqtt
 from runtime_config import (
-    MQTT_BROKERS,
-    MQTT_CA_FILE,
-    MQTT_CONNECT_TIMEOUT,
-    MQTT_PORT,
-    MQTT_TLS_ENABLED,
-    MQTT_TOPIC,
     REFRESH_INTERVAL,
     SHIFTS,
+    TEMPERATURE_ALERT_THRESHOLD_C,
+    TEMPERATURE_BASE_DIR,
+)
+from temperature_store import (
+    CameraTemperature,
+    latest_temperature_snapshot,
+    over_temperature_readings,
 )
 
 
@@ -27,11 +28,87 @@ class SidebarState:
     image_refresh_seconds: int
 
 
+def _temperature_by_camera(
+    readings: tuple[CameraTemperature, ...],
+) -> dict[int, CameraTemperature]:
+    return {reading.camera_number: reading for reading in readings}
+
+
+def _format_temperature(value_c: float | None) -> str:
+    return f"{value_c:.1f} C" if value_c is not None else "--"
+
+
+def _temperature_style(value_c: float | None) -> str:
+    if value_c is not None and value_c > TEMPERATURE_ALERT_THRESHOLD_C:
+        return "color:#b91c1c;font-weight:700;"
+    return "color:#111827;font-weight:700;"
+
+
+def _format_timestamp(value: object) -> str | None:
+    if value is None:
+        return None
+    if hasattr(value, "strftime"):
+        return value.strftime("%Y-%m-%d %H:%M:%S")
+    return str(value)
+
+
+def _render_temperature_panel() -> None:
+    snapshot = latest_temperature_snapshot(TEMPERATURE_BASE_DIR)
+    readings_by_camera = _temperature_by_camera(snapshot.readings)
+    hot_readings = over_temperature_readings(
+        snapshot.readings,
+        TEMPERATURE_ALERT_THRESHOLD_C,
+    )
+
+    cam_1 = readings_by_camera.get(1)
+    cam_2 = readings_by_camera.get(2)
+    cam_1_value = cam_1.value_c if cam_1 else None
+    cam_2_value = cam_2.value_c if cam_2 else None
+
+    st.sidebar.markdown(
+        f"""
+        <div style="margin:0.35rem 0 0.55rem 0;">
+            <div style="font-size:0.82rem;font-weight:700;color:#4b5563;margin-bottom:0.2rem;">
+                Temp
+            </div>
+            <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;font-size:0.88rem;line-height:1.25;">
+                <span>CAM 1 : <span style="{_temperature_style(cam_1_value)}">{html.escape(_format_temperature(cam_1_value))}</span></span>
+                <span>CAM 2 : <span style="{_temperature_style(cam_2_value)}">{html.escape(_format_temperature(cam_2_value))}</span></span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    for reading in hot_readings:
+        st.sidebar.error(
+            f"{reading.label} temperature high: "
+            f"{reading.value_c:.1f} C"
+        )
+
+    updated_at = (
+        snapshot.captured_at
+        or max(
+            (
+                reading.captured_at
+                for reading in snapshot.readings
+                if reading.captured_at is not None
+            ),
+            default=None,
+        )
+        or snapshot.updated_at
+    )
+    updated_text = _format_timestamp(updated_at)
+    if updated_text:
+        st.sidebar.caption(f"Temp updated: {updated_text}")
+
+
 def render_sidebar() -> SidebarState:
-    st.sidebar.title("Operator Details")
+    st.sidebar.markdown("### Operator Details")
     op_name = st.sidebar.text_input("Operator Name")
     op_id = st.sidebar.text_input("Operator ID")
     shift = st.sidebar.selectbox("Shift", SHIFTS)
+    _render_temperature_panel()
 
     st.sidebar.divider()
     st.sidebar.markdown("### Image View")
@@ -43,9 +120,6 @@ def render_sidebar() -> SidebarState:
         st.session_state["enhance_coil_images"] = not enhance_images
         st.rerun()
     enhance_images = bool(st.session_state.get("enhance_coil_images", False))
-    st.sidebar.caption(
-        f"Current view: {'Enhanced' if enhance_images else 'Original'}"
-    )
 
     st.sidebar.divider()
     st.sidebar.markdown("### Live Images")
@@ -69,79 +143,6 @@ def render_sidebar() -> SidebarState:
     )
     if st.sidebar.button("Refresh Images Now", use_container_width=True):
         st.rerun()
-
-    # MQTT broker can be the Pi hostname/IP when running this dashboard on a laptop.
-    st.sidebar.divider()
-    mqtt_brokers = st.sidebar.text_input(
-        "MQTT broker(s)",
-        value=MQTT_BROKERS,
-        help="Enter only a host/IP like localhost. Pasting mosquitto_sub -h ... also works.",
-    )
-    mqtt_port = st.sidebar.number_input(
-        "MQTT port",
-        min_value=1,
-        max_value=65535,
-        value=MQTT_PORT,
-        step=1,
-    )
-    mqtt_topic = st.sidebar.text_input("MQTT topic", value=MQTT_TOPIC)
-    mqtt_tls_enabled = st.sidebar.checkbox("MQTT TLS", value=MQTT_TLS_ENABLED)
-    mqtt_ca_file = st.sidebar.text_input("MQTT CA file", value=MQTT_CA_FILE)
-
-    mqtt_settings = extract_mqtt_command_values(
-        mqtt_brokers,
-        mqtt_topic,
-        int(mqtt_port),
-        mqtt_tls_enabled,
-        mqtt_ca_file,
-    )
-
-    if mqtt_settings.command_was_pasted:
-        tls_text = "TLS enabled" if mqtt_settings.tls_enabled else "TLS disabled"
-        st.sidebar.caption(
-            f"Using `{mqtt_settings.brokers}:{mqtt_settings.port}` and topic `{mqtt_settings.topic}` from pasted command. {tls_text}."
-        )
-
-    if st.sidebar.button("Reconnect MQTT"):
-        start_mqtt.clear()
-        st.rerun()
-
-    temp_state, _mqtt_client = start_mqtt(
-        mqtt_settings.brokers,
-        mqtt_settings.topic,
-        mqtt_settings.port,
-        MQTT_CONNECT_TIMEOUT,
-        mqtt_settings.tls_enabled,
-        mqtt_settings.ca_file,
-    )
-    latest_temp = temp_state.snapshot()
-    latest_temp["ts"] = latest_temp.get("updated_at")
-
-    with st.sidebar:
-        st.markdown("### Temperature")
-        temp_display = st.empty()
-        ts_display = st.empty()
-
-        val = latest_temp.get("value")
-        ts = latest_temp.get("ts")
-        sensor_status = latest_temp.get("sensor_status")
-        broker = latest_temp.get("broker")
-        error = latest_temp.get("error")
-
-        if val is None:
-            temp_display.info("No temperature reading yet")
-        else:
-            temp_display.metric(label="Temperature", value=f"{val:.2f} C")
-            if ts:
-                ts_display.caption(f"Updated: {ts}")
-
-        if sensor_status:
-            st.caption(f"Sensor: {sensor_status}")
-        if broker:
-            security = "TLS" if mqtt_settings.tls_enabled else "Plain"
-            st.caption(f"MQTT: {broker} | {mqtt_settings.topic} | {security}")
-        if error:
-            st.error(error)
 
     return SidebarState(
         operator_name=op_name,

@@ -12,7 +12,7 @@ camera images.
 - Sidebar live-image refresh controls powered by Streamlit fragments
 - Operator validation flow with JSON metadata persistence
 - Shift and validation statistics with tunnel/date filters
-- Sidebar MQTT temperature display
+- Sidebar display for received Cam 1 and Cam 2 temperatures
 
 ## Setup
 
@@ -36,8 +36,9 @@ Runtime settings are stored in:
 config/runtime.yaml
 ```
 
-The file owns application titles, refresh timing, image paths, tunnel aliases,
-operator shifts, validation choices, image extensions, and MQTT defaults.
+The file owns application titles, refresh timing, image paths, temperature
+paths/alerts, tunnel aliases, operator shifts, validation choices, and image
+extensions.
 
 Use a different runtime file when needed:
 
@@ -92,35 +93,37 @@ UID or coil number. JSON metadata can either match the image name
 Missing folders, images, annotations, and JSON files are handled with dashboard
 warnings instead of crashes.
 
-## MQTT Temperature
+## Received Camera Temperature
 
-The sidebar reads camera temperature messages over MQTT/TLS from:
+The receiver stores camera temperature payloads under:
 
 ```text
-voptimaipi5.local:8883 | hotmetal/env/reading
+received_temperatures/
+  2026-06-16/
+    camera_temperature.jsonl
 ```
 
-Expected payload:
+Each JSONL row is expected to contain a `readings` list. Common temperature and
+camera field names such as `temp_c`, `temperature`, `camera_id`, `camera`,
+`cam_no`, and `sensor` are supported.
 
 ```json
-{"sensor":"DS18B20","temp_c":35.875,"timestamp":18129,"status":"ok"}
+{
+  "captured_at": "2026-06-16T10:30:00",
+  "readings": [
+    {"camera_id": 1, "temp_c": 42.5, "status": "ok"},
+    {"camera_id": 2, "temp_c": 43.1, "status": "ok"}
+  ]
+}
 ```
 
-The dashboard defaults match this command:
+The sidebar shows both camera temperatures. The dashboard raises an alert when
+any camera temperature is above the configured threshold, which defaults to
+`65 C`.
 
 ```powershell
-mosquitto_sub -h voptimaipi5.local -p 8883 --cafile /etc/mosquitto/certs/ca.crt -t hotmetal/env/reading
-```
-
-When running somewhere other than the Pi, make sure the CA file is available at
-the configured path or update it in the sidebar. You can also override MQTT
-settings with environment variables:
-
-```powershell
-$env:MQTT_BROKERS="voptimaipi5.local"
-$env:MQTT_PORT="8883"
-$env:MQTT_TLS_ENABLED="true"
-$env:MQTT_CA_FILE="/etc/mosquitto/certs/ca.crt"
+$env:SBM_TEMPERATURE_DIR="/path/to/received_temperatures"
+$env:SBM_TEMPERATURE_ALERT_THRESHOLD_C="65"
 ```
 
 ## Project Structure
@@ -134,10 +137,10 @@ SBM_dashboard_v1/
   src/
     app.py
     runtime_config.py
-    mqtt.py
     image_store.py
     metadata.py
     stats.py
+    temperature_store.py
     ui/
       sidebar.py
       main_page.py
