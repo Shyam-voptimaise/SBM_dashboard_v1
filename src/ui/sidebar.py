@@ -54,7 +54,7 @@ def render_sidebar() -> SidebarState:
         value=True,
         key="auto_refresh_images",
     )
-    default_refresh_interval = max(1, min(int(REFRESH_INTERVAL), 120))
+    default_refresh_interval = max(10, min(int(REFRESH_INTERVAL), 120))
     image_refresh_seconds = int(
         st.sidebar.slider(
             "Refresh interval",
