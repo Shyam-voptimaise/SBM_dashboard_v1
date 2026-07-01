@@ -45,6 +45,28 @@ def _temperature_style(value_c: float | None) -> str:
     return "color:#111827;font-weight:700;"
 
 
+def _temperature_card(
+    label: str,
+    value_c: float | None,
+) -> str:
+    return f"""
+        <div style="
+            flex:1 1 5.8rem;
+            min-width:5.8rem;
+            border:1px solid #e5e7eb;
+            border-radius:6px;
+            padding:0.42rem 0.5rem;
+            background:#ffffff;">
+            <div style="font-size:0.68rem;font-weight:700;color:#6b7280;letter-spacing:0;">
+                {html.escape(label)}
+            </div>
+            <div style="font-size:0.95rem;line-height:1.2;{_temperature_style(value_c)}">
+                {html.escape(_format_temperature(value_c))}
+            </div>
+        </div>
+    """
+
+
 def _format_timestamp(value: object) -> str | None:
     if value is None:
         return None
@@ -65,16 +87,24 @@ def _render_temperature_contents() -> None:
     cam_2 = readings_by_camera.get(2)
     cam_1_value = cam_1.value_c if cam_1 else None
     cam_2_value = cam_2.value_c if cam_2 else None
+    received_state = (
+        "Latest received reading"
+        if snapshot.readings
+        else "Waiting for first received reading"
+    )
 
     st.markdown(
         f"""
-        <div style="margin:0.35rem 0 0.55rem 0;">
-            <div style="font-size:0.82rem;font-weight:700;color:#4b5563;margin-bottom:0.2rem;">
-                Temp
+        <div style="margin:0.35rem 0 0.6rem 0;">
+            <div style="font-size:0.88rem;font-weight:700;color:#111827;line-height:1.15;">
+                Camera Temperature
             </div>
-            <div style="display:flex;gap:0.6rem;align-items:center;flex-wrap:wrap;font-size:0.88rem;line-height:1.25;">
-                <span>CAM 1 : <span style="{_temperature_style(cam_1_value)}">{html.escape(_format_temperature(cam_1_value))}</span></span>
-                <span>CAM 2 : <span style="{_temperature_style(cam_2_value)}">{html.escape(_format_temperature(cam_2_value))}</span></span>
+            <div style="font-size:0.72rem;color:#6b7280;margin:0.08rem 0 0.35rem 0;line-height:1.2;">
+                {html.escape(received_state)}
+            </div>
+            <div style="display:flex;gap:0.45rem;align-items:stretch;">
+                {_temperature_card("CAM 1", cam_1_value)}
+                {_temperature_card("CAM 2", cam_2_value)}
             </div>
         </div>
         """,
@@ -101,7 +131,7 @@ def _render_temperature_contents() -> None:
     )
     updated_text = _format_timestamp(updated_at)
     if updated_text:
-        st.caption(f"Temp updated: {updated_text}")
+        st.caption(f"Last received: {updated_text}")
 
 
 def _render_temperature_panel() -> None:
